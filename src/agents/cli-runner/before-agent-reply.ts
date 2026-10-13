@@ -5,6 +5,7 @@ import {
 } from "../../plugins/before-agent-reply.js";
 import {
   buildAgentHookContextChannelFields,
+  buildAgentHookContextCronFields,
   buildAgentHookContextIdentityFields,
 } from "../../plugins/hook-agent-context.js";
 import { resolveCliBackendConfig } from "../cli-backends.js";
@@ -30,6 +31,7 @@ export async function runCliBeforeAgentReply(
           context: {
             runId: params.runId,
             jobId: params.jobId,
+            ...buildAgentHookContextCronFields(params),
             agentId: params.agentId,
             sessionKey: params.sessionKey,
             heartbeatEventQueueSessionKey: params.heartbeatEventQueueSessionKey,
