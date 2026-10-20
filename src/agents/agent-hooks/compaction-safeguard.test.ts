@@ -318,8 +318,10 @@ describe("compaction-safeguard runtime registry", () => {
 
 describe("compaction-safeguard recent-turn preservation", () => {
   it.each(["user", "assistant", "toolResult", "section budget"])(
-    "summarizes recent %s context before its preservation section would truncate it",
+    "sends recent %s facts beyond preservation limits through the real summary request",
     async (source) => {
+      testing.setSummarizeCompactionHistoryForTest(compactionModule.summarizeCompactionHistory);
+      const model = anthropicModel({ api: "test-api" as never, baseUrl: "" });
       const tailFact = "Keep the existing publication approval requirement.";
       const longText = `${"context ".repeat(90)}${tailFact}`;
       const messages: AgentMessage[] = [userMessage("initial request", 1)];
@@ -340,29 +342,44 @@ describe("compaction-safeguard recent-turn preservation", () => {
           ...toolCalls.map((toolCall, index) =>
             toolResultMessage(
               toolCall.id,
-              source === "section budget" ? `${"x".repeat(500)}${tailFact}` : longText,
+              source === "section budget"
+                ? `${"x".repeat(500)}${index === 0 ? tailFact : "Tool output."}`
+                : longText,
               { timestamp: index + 3 },
             ),
           ),
         );
       }
       messages.push(userMessage("continue", 100));
-      summarizeHistory.mockImplementation(async ({ messages: received }) => {
-        expect(JSON.stringify(received)).toContain(tailFact);
-        return structuredSummary({ rules: tailFact, asks: "continue" });
+      // The raw preservation artifact loses this fact; the model request must not.
+      expect(preservedTurnsText(messages)).not.toContain(tailFact);
+      const providerPrompts: string[] = [];
+      const providerSummary = structuredSummary({
+        decisions: "Synthetic summary request completed.",
+        asks: "continue",
       });
-      const sessionManager = qualitySession({ recentTurnsPreserve: 2 });
-      const event = compactionEvent({
-        preparation: {
-          messagesToSummarize: messages,
-          latestUnresolvedUserRequest: "continue",
-        },
-      });
+      const streamFn: StreamFn = (_activeModel, context) => {
+        providerPrompts.push(JSON.stringify(context));
+        // Deliberately omit tailFact: this fixture proves request delivery, not model recall.
+        return summaryStream(model, { text: providerSummary });
+      };
+      const sessionManager = qualitySession({ model, recentTurnsPreserve: 2 });
+      const event = {
+        ...compactionEvent({
+          preparation: {
+            messagesToSummarize: messages,
+            latestUnresolvedUserRequest: "continue",
+          },
+        }),
+        streamFn,
+      };
 
       const { summary } = await runSummary(sessionManager, event);
 
-      expect(summary).toContain(tailFact);
-      expect(summarizeHistory).toHaveBeenCalledTimes(1);
+      expect(providerPrompts).toHaveLength(1);
+      expect(providerPrompts[0]).toContain("<conversation>");
+      expect(providerPrompts[0]).toContain(tailFact);
+      expect(summary).toContain("Synthetic summary request completed.");
     },
   );
 
