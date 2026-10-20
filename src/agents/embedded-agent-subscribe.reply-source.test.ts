@@ -1,4 +1,5 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { projectAssistantTranscriptText } from "../config/sessions/transcript-assistant-delivery-read.js";
 import { getReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import type { PersistedUserTurnMessage } from "../sessions/user-turn-transcript.types.js";
 import { resolveAssistantReplySource, withAssistantReplySource } from "./embedded-agent-reply-source.js";
@@ -27,11 +28,13 @@ describe("consumed input reply sources", () => {
   it("keeps buffered and final answers on their consumed inputs after later steering", async () => {
     const contexts = [input("101")];
     const onBlockReply = vi.fn();
+    const delivery = Promise.withResolvers<void>();
     const { emit, subscription } = createSubscribedSessionHarness({
       runId: "reply-source",
       messageChannel: "telegram",
       getUserTranscriptContexts: () => contexts,
       onBlockReply,
+      onBlockReplyFlush: () => delivery.promise,
       onBeforeTerminalDelivery: () => {},
       blockReplyBreak: "message_end",
     });
@@ -45,9 +48,14 @@ describe("consumed input reply sources", () => {
     emit({ type: "message_start", message: second });
     contexts.push(input("103"));
     emit({ type: "message_end", message: second });
+    // AgentSessionBase persists immediately after synchronous message_end listeners.
+    const persistedSecond = structuredClone(second);
+    delivery.resolve();
     emit({ type: "agent_end", messages: [first, second] });
     await subscription.waitForPendingEvents();
     expect(onBlockReply.mock.calls.map(([payload]) => payload.replyToId)).toEqual(["101", "102"]);
+    expect(projectAssistantTranscriptText(persistedSecond)?.openclawDelivery?.sourceMessageId)
+      .toBe("102");
     const payloads = buildPayloads({
       assistantTexts: subscription.assistantTexts,
       answerSegments: subscription.answerSegments,

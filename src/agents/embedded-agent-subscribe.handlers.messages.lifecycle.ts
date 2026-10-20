@@ -92,12 +92,6 @@ export function handleMessageEnd(
   // the completed model round trips consumers see as `assistantTurns`.
   ctx.state.assistantTurnCount += 1;
   const assistantMessage = msg;
-  if (ctx.state.assistantReplyToId) {
-    assistantMessage.openclawDelivery = {
-      ...assistantMessage.openclawDelivery,
-      sourceMessageId: ctx.state.assistantReplyToId,
-    };
-  }
   const assistantPhase = resolveAssistantMessagePhase(assistantMessage);
   const suppressVisibleAssistantOutput = assistantPhase === "commentary";
   const suppressDeterministicApprovalOutput = shouldSuppressDeterministicApprovalOutput(ctx.state);
