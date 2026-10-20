@@ -31,7 +31,6 @@ import {
   prepareAgentRunTerminalReply,
   type PreparedAgentRunTerminalReply,
 } from "../../agent-run-terminal-reply.js";
-import { withAssistantReplySource } from "../../embedded-agent-reply-source.js";
 import { classifyOAuthRefreshFailure } from "../../auth-profiles/oauth-refresh-failure.js";
 import { classifyAssistantFailoverReason } from "../../embedded-agent-helpers/assistant-message-failures.js";
 import {
@@ -45,6 +44,7 @@ import type {
   MessagingToolSend,
   MessagingToolSourceReplyPayload,
 } from "../../embedded-agent-messaging.types.js";
+import { withAssistantReplySource } from "../../embedded-agent-reply-source.js";
 import type { EmbeddedAgentSubscribeState } from "../../embedded-agent-subscribe.handlers.types.js";
 import type { ToolResultFormat } from "../../embedded-agent-subscribe.shared-types.js";
 import { isToolAuthoredSourceReplyForAssistant } from "../../embedded-agent-tool-authored-source-reply.js";

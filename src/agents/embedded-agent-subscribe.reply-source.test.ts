@@ -1,7 +1,14 @@
+import path from "node:path";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { getReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
-import { projectAssistantTranscriptText } from "../config/sessions/transcript-assistant-delivery-read.js";
+import {
+  loadTranscriptEvents,
+  upsertSessionEntryCore,
+} from "../config/sessions/session-accessor.js";
+import { readLatestTranscriptAssistantTextAsync } from "../config/sessions/session-transcript-assistant-read.js";
 import type { PersistedUserTurnMessage } from "../sessions/user-turn-transcript.types.js";
+import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   resolveAssistantReplySource,
   withAssistantReplySource,
@@ -9,6 +16,8 @@ import {
 import type { UserTranscriptContext } from "./embedded-agent-runner/run/attempt-history.js";
 import { buildPayloads } from "./embedded-agent-runner/run/payloads.test-helpers.js";
 import { createSubscribedSessionHarness } from "./embedded-agent-subscribe.e2e-harness.js";
+import { persistAgentSessionMessage } from "./sessions/agent-session-transcript.js";
+import { SessionManager } from "./sessions/session-manager.js";
 import { makeAgentAssistantMessage } from "./test-helpers/agent-message-fixtures.js";
 
 function input(messageId: string, conversationRef = "telegram:fixture"): UserTranscriptContext {
@@ -29,11 +38,22 @@ const assistant = (text: string) =>
 
 describe("consumed input reply sources", () => {
   it("keeps buffered and final answers on their consumed inputs after later steering", async () => {
+    const state = await createOpenClawTestState({ label: "reply-source-persistence" });
+    onTestFinished(() => state.cleanup());
+    const target = {
+      agentId: "main",
+      sessionId: "reply-source",
+      sessionKey: "agent:main:reply-source",
+      storePath: path.join(state.agentDir("main"), "openclaw-agent.sqlite"),
+    };
+    await upsertSessionEntryCore(target, { sessionId: target.sessionId, updatedAt: 1 });
+    const manager = await SessionManager.openAsync(target, state.workspaceDir);
     const contexts = [input("101")];
     const onBlockReply = vi.fn();
     const delivery = Promise.withResolvers<void>();
     const { emit, subscription } = createSubscribedSessionHarness({
       runId: "reply-source",
+      sessionExtras: { sessionManager: manager },
       messageChannel: "telegram",
       getUserTranscriptContexts: () => contexts,
       onBlockReply,
@@ -41,25 +61,46 @@ describe("consumed input reply sources", () => {
       onBeforeTerminalDelivery: () => {},
       blockReplyBreak: "message_end",
     });
-    onTestFinished(() => subscription.unsubscribe());
+    onTestFinished(async () => {
+      delivery.resolve();
+      await subscription.waitForPendingEvents();
+      subscription.unsubscribe();
+    });
     const first = assistant("First answer");
     emit({ type: "message_start", message: first });
     contexts.push(input("102"));
     emit({ type: "message_end", message: first });
+    await persistAgentSessionMessage(manager, first, { invalidateSerializedPrefixCache: false });
     emit({ type: "message_end", message: contexts[1]?.runtimeMessage });
     const second = assistant("Second answer");
     emit({ type: "message_start", message: second });
     contexts.push(input("103"));
     emit({ type: "message_end", message: second });
-    // AgentSessionBase persists immediately after synchronous message_end listeners.
-    const persistedSecond = structuredClone(second);
+    // Persist before buffered lifecycle handlers settle, as AgentSessionBase does.
+    await persistAgentSessionMessage(manager, second, { invalidateSerializedPrefixCache: false });
     delivery.resolve();
     emit({ type: "agent_end", messages: [first, second] });
     await subscription.waitForPendingEvents();
     expect(onBlockReply.mock.calls.map(([payload]) => payload.replyToId)).toEqual(["101", "102"]);
-    expect(projectAssistantTranscriptText(persistedSecond)?.openclawDelivery?.sourceMessageId).toBe(
-      "102",
+    const stored = (await loadTranscriptEvents(target)).flatMap((event) =>
+      isRecord(event) && isRecord(event.message) && event.message.role === "assistant"
+        ? [event.message]
+        : [],
     );
+    expect(stored).toMatchObject([
+      {
+        content: [{ type: "text", text: "First answer" }],
+        openclawDelivery: { sourceMessageId: "101" },
+      },
+      {
+        content: [{ type: "text", text: "Second answer" }],
+        openclawDelivery: { sourceMessageId: "102" },
+      },
+    ]);
+    expect(await readLatestTranscriptAssistantTextAsync(target)).toMatchObject({
+      text: "Second answer",
+      openclawDelivery: { sourceMessageId: "102" },
+    });
     const payloads = buildPayloads({
       assistantTexts: subscription.assistantTexts,
       answerSegments: subscription.answerSegments,
