@@ -1,0 +1,62 @@
+name: Independent OpenClaw native qualification
+on:
+  push:
+    branches: [qualification/openclaw-pr-capacity-20261020]
+    paths:
+      - .github/workflows/openclaw-independent-proof-20261020.yml
+      - .github/qualification/openclaw-pr-proof-20261020/**
+permissions:
+  contents: read
+jobs:
+  select:
+    if: github.repository == 'ChuLaiTheGreat/openclaw' && github.event_name == 'push' && github.ref == 'refs/heads/qualification/openclaw-pr-capacity-20261020' && !github.event.deleted && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      phase: ${{ steps.select.outputs.phase }}
+      head: ${{ steps.select.outputs.head }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: select
+        shell: bash
+        run: python3 .github/qualification/openclaw-pr-proof-20261020/portable-proof-bootstrap.py --select
+  package178124:
+    needs: select
+    if: needs.select.outputs.phase == 'package178124'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    concurrency:
+      group: isolated-openclaw-package178124-${{ needs.select.outputs.head }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Native published-package upgrade proof
+        shell: bash
+        run: python3 .github/qualification/openclaw-pr-proof-20261020/portable-proof-bootstrap.py --run package178124
+  sdk171315:
+    needs: select
+    if: needs.select.outputs.phase == 'sdk171315'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    concurrency:
+      group: isolated-openclaw-sdk171315-${{ needs.select.outputs.head }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Native SDK exports build profiler API and boundary proof
+        shell: bash
+        run: python3 .github/qualification/openclaw-pr-proof-20261020/portable-proof-bootstrap.py --run sdk171315

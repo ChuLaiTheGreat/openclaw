@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "phase": "package178124",
+  "repository": "ChuLaiTheGreat/openclaw",
+  "branch": "qualification/openclaw-pr-capacity-20261020",
+  "toolingSha": "5a0b5006d5fcb72f238c3c587395bf38591971ad",
+  "dockerfileSha256": "b2c59a849429c0424fd6c95c82dc373c0261893121fcc4faeebf954c7c498549",
+  "baseImage": "node:24-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315",
+  "pnpmArchiveSha256": "f61657f53f7891f76ae5cf11e924ee3e9ae1659affcaf7deb9622d4d7ea5637e",
+  "pnpmExecutableSha256": "f1cdef3cc3805f39d64ab2fbae7d9f263d8f38de6a1f7f0fd07b5bc09f74c415",
+  "candidates": {
+    "package178124": {
+      "pr": 178124,
+      "head": "09517e7ab48747e2935ffbab41d3c90d2bde4202",
+      "tree": "fb409e5571e51267017a43b478f9052f5ce886c3"
+    },
+    "sdk171315": {
+      "pr": 171315,
+      "head": "REPLACE_WITH_REVIEWED_PUBLISHED_HEAD",
+      "tree": "dab194265054fe800c9f53d5f7706f006974c11b"
+    }
+  }
+}
