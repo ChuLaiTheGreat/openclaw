@@ -16,6 +16,8 @@ import urllib.request
 
 HERE = Path(__file__).resolve().parent
 SHA = re.compile(r'^[a-f0-9]{40}$')
+BASE_TOOLING = '5a0b5006d5fcb72f238c3c587395bf38591971ad'
+E2E_PATHS = {'scripts/e2e/lib/plugin-index-sqlite.mjs', 'scripts/e2e/lib/upgrade-survivor/assertions.mjs', 'scripts/e2e/lib/upgrade-survivor/sqlite-volume.mjs', 'test/scripts/plugin-index-sqlite.test.ts'}
 PHASES = {'package178124', 'sdk171315'}
 PRIVATE_FIELDS = re.compile(r'(token|secret|password|auth|api.?key|cookie|credential)', re.I)
 
@@ -52,6 +54,12 @@ def selection():
         raise RuntimeError('Final reviewed public candidate is not pinned; no build authorized')
     if c['pr'] != {'package178124':178124, 'sdk171315':171315}[phase]:
         raise RuntimeError('PR identity mismatch')
+    if phase=='package178124':
+        tooling=m['packageTooling']
+        if tooling['parent']!=BASE_TOOLING or not SHA.fullmatch(tooling['tree']) or type(tooling['pr']) is not int or tooling['pr']<=0:
+            raise RuntimeError('Final public E2E tooling provenance is not pinned')
+    elif m['toolingSha']!=BASE_TOOLING:
+        raise RuntimeError('SDK comparison baseline must remain the original pinned main')
     return m, phase, c
 
 def capacity():
@@ -96,6 +104,32 @@ def checkout(root,repo,head,tree=None):
     run(['git','-C',root,'checkout','--quiet','--detach',head])
     if capture(['git','-C',root,'rev-parse','HEAD']) != head or (tree and capture(['git','-C',root,'rev-parse','HEAD^{tree}']) != tree):
         raise RuntimeError('Checkout identity mismatch')
+
+def verify_package_tooling(manifest,tooling,proof):
+    pin=manifest['packageTooling'];head=manifest['toolingSha'];parent=pin['parent']
+    if capture(['git','-C',tooling,'show','-s','--format=%P','HEAD'])!=parent:
+        raise RuntimeError('E2E tooling must have exactly the original main parent')
+    if capture(['git','-C',tooling,'rev-parse','HEAD^{tree}'])!=pin['tree']:
+        raise RuntimeError('Reviewed E2E tooling tree changed')
+    changed=capture(['git','-C',tooling,'diff','--name-only','--no-renames',parent,head]).splitlines()
+    if len(changed)!=len(E2E_PATHS) or set(changed)!=E2E_PATHS:
+        raise RuntimeError('E2E tooling changes outside the four reviewed fixture files')
+    for name in sorted(E2E_PATHS):
+        for revision in [parent,head]:
+            row=capture(['git','-C',tooling,'ls-tree',revision,'--',name]).split()
+            if len(row)!=4 or row[0]!='100644' or row[1]!='blob' or row[3]!=name:
+                raise RuntimeError('E2E tooling path is not an existing regular source file')
+    # The exact changed-file set also excludes all transitive plan/dependency changes.
+    unchanged=['scripts/e2e/Dockerfile','scripts/test-docker-all.mjs','scripts/lib/docker-e2e-plan.mts','package.json','pnpm-lock.yaml','pnpm-workspace.yaml']
+    blobs={}
+    for name in unchanged:
+        old=capture(['git','-C',tooling,'rev-parse',parent+':'+name]);new=capture(['git','-C',tooling,'rev-parse',head+':'+name])
+        if old!=new:raise RuntimeError('Native plan/toolchain changed: '+name)
+        blobs[name]=new
+    receipt={'head':head,'tree':pin['tree'],'parent':parent,'changedFiles':changed,'unchangedNativeBlobs':blobs,'scope':'Only reviewed E2E bounded projection; native plan, Dockerfile and dependency manifests unchanged'}
+    (proof/'tooling-provenance.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    print('TOOLING_PROVENANCE',json.dumps(receipt),flush=True)
+    return receipt
 
 def source_snapshot(source):
     return {'head':capture(['git','-C',source,'rev-parse','HEAD']), 'tree':capture(['git','-C',source,'rev-parse','HEAD^{tree}']), 'trackedStatus':capture(['git','-C',source,'status','--porcelain','--untracked-files=no'])}
@@ -157,11 +191,15 @@ def main():
     if os.environ.get('GITHUB_REPOSITORY')!=m['repository'] or os.environ.get('GITHUB_EVENT_NAME')!='push' or os.environ.get('GITHUB_REF')!='refs/heads/'+m['branch'] or os.environ.get('GITHUB_RUN_ATTEMPT')!='1':
         raise RuntimeError('Unexpected actual workflow identity; never spoof GitHub context')
     cap=capacity();public=public_candidate(m,c)
+    public_tooling=public_candidate(m,{'pr':m['packageTooling']['pr'],'head':m['toolingSha']}) if phase=='package178124' else None
     root=Path(os.environ['RUNNER_TEMP'])/('openclaw-native-'+phase+'-'+c['head'][:12]);root.mkdir(mode=0o700)
     proof=root/'proof';proof.mkdir(mode=0o700)
     (proof/'capacity.json').write_text(json.dumps(cap)+'\n');(proof/'public-candidate.json').write_text(json.dumps(public)+'\n')
     tooling=root/'tooling';candidate=root/'candidate'
-    checkout(tooling,'openclaw/openclaw',m['toolingSha']);checkout(candidate,m['repository'],c['head'],c['tree'])
+    checkout(tooling,m['repository'] if phase=='package178124' else 'openclaw/openclaw',m['toolingSha']);checkout(candidate,m['repository'],c['head'],c['tree'])
+    if phase=='package178124':
+        (proof/'public-tooling.json').write_text(json.dumps(public_tooling)+'\n')
+        verify_package_tooling(m,tooling,proof)
     if digest(tooling/'scripts/e2e/Dockerfile')!=m['dockerfileSha256']: raise RuntimeError('Native Dockerfile changed')
     tools=root/'tools';tools.mkdir();archive=root/'pnpm.tar.gz'
     urllib.request.urlretrieve('https://github.com/pnpm/pnpm/releases/download/v12.12.1/pnpm-linux-x64.tar.gz',archive)

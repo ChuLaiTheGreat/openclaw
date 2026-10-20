@@ -12,13 +12,14 @@ esac
 die() { echo "$*" >&2; exit 1; }
 : "${TOOLING_ROOT:?}" "${CANDIDATE_ROOT:?}" "${PROOF_ROOT:?}" "${PNPM_TOOLS:?}"
 : "${IMAGE_ID:?}" "${IMAGE_PROVENANCE_FILE:?}" "${RUNNER_TEMP:?}"
-TOOLING=5a0b5006d5fcb72f238c3c587395bf38591971ad
+TOOLING=637db088c3fb0edcf516c74d63892becbbd7466e
 SELECTED=09517e7ab48747e2935ffbab41d3c90d2bde4202
 EXPECTED_TREE=fb409e5571e51267017a43b478f9052f5ce886c3
 EXPECTED_PARENTS="eb3874c1d23b9a1bc6f424148f793d991b6c56f8 94dacc48dfb325197481e95cc0fe3fd863eec645"
 DOCKERFILE_SHA=b2c59a849429c0424fd6c95c82dc373c0261893121fcc4faeebf954c7c498549
 BASE_IMAGE=node:24-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315
 PNPM_SHA=f1cdef3cc3805f39d64ab2fbae7d9f263d8f38de6a1f7f0fd07b5bc09f74c415
+[[ "$TOOLING" =~ ^[0-9a-f]{40}$ ]] || die 'Final public E2E tooling commit is not pinned'
 [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'Native image ID must be explicit'
 [[ -z "${FINAL_PACKAGE_SHA:-}" || "$FINAL_PACKAGE_SHA" == "$SELECTED" ]] || die 'Manifest package SHA differs from reviewed public head'
 [[ -d "$TOOLING_ROOT" && -d "$CANDIDATE_ROOT" && -d "$PNPM_TOOLS" ]] || die 'Bootstrap paths missing'
