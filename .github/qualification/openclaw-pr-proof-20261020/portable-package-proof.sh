@@ -131,7 +131,7 @@ if(manifests.some(m=>!m.packageManager.startsWith("pnpm@12.12.1+sha512.")||!semv
  throw Error("Host Node/pnpm does not satisfy exact source/tooling manifests");
 console.log(JSON.stringify({hostNode:process.version,nodeRanges:manifests.map(m=>m.engines.node),pnpmPins:manifests.map(m=>m.packageManager)}));
 NODE
-  [[ $(env -i PATH="$PNPM_TOOLS:$HOST_NODE_DIR:/usr/bin:/bin" HOME="$PROOF/driver-home" "$PNPM_TOOLS/pnpm" --version) == 12.12.1 ]] || die 'Native pnpm version changed'
+  [[ $(cd "$HARNESS"; env -i PATH="$PNPM_TOOLS:$HOST_NODE_DIR:/usr/bin:/bin" HOME="$PROOF/driver-home" "$PNPM_TOOLS/pnpm" --version) == 12.12.1 ]] || die 'Native pnpm version changed'
 }
 
 driver() {
