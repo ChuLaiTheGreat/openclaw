@@ -1,4 +1,4 @@
-import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
+import { copyReplyPayloadMetadata } from "../../auto-reply/reply-payload.js";
 import {
   buildHandledBeforeAgentReplyPayloads,
   runBeforeAgentReplyForTurn,
@@ -8,6 +8,7 @@ import {
   buildAgentHookContextCronFields,
   buildAgentHookContextIdentityFields,
 } from "../../plugins/hook-agent-context.js";
+import { prepareAgentRunTerminalReply } from "../agent-run-terminal-reply.js";
 import { resolveCliBackendConfig } from "../cli-backends.js";
 import type { EmbeddedAgentRunResult } from "../embedded-agent-runner/types.js";
 import { cliBackendLog, formatCliBackendOutputDigest } from "./log.js";
@@ -60,7 +61,8 @@ export async function runCliBeforeAgentReply(
             }),
         });
   if (hookResult?.handled) {
-    const finalText = hookResult.reply?.text ?? SILENT_REPLY_TOKEN;
+    const finalText = hookResult.reply?.text ?? "";
+    const prepared = prepareAgentRunTerminalReply({ rawText: finalText });
     const syntheticBackend = resolveCliBackendConfig(params.provider, params.config, {
       agentId: params.agentId,
     });
@@ -69,7 +71,14 @@ export async function runCliBeforeAgentReply(
       `cli synthetic turn: provider=${params.provider} model=<synthetic> requestedModel=${params.model ?? ""} durationMs=${Date.now() - hookStartedAt} ${formatCliBackendOutputDigest(finalText)}`,
     );
     return {
-      payloads: buildHandledBeforeAgentReplyPayloads(hookResult.reply),
+      payloads: hookResult.reply
+        ? buildHandledBeforeAgentReplyPayloads(
+            copyReplyPayloadMetadata(hookResult.reply, {
+              ...hookResult.reply,
+              text: prepared.text,
+            }),
+          )
+        : [],
       meta: {
         durationMs: Date.now() - hookStartedAt,
         agentMeta: {
@@ -78,8 +87,10 @@ export async function runCliBeforeAgentReply(
           model: params.model ?? "",
           ...(sessionBindingDisabled ? { clearCliSessionBinding: true } : {}),
         },
-        finalAssistantVisibleText: finalText,
+        finalAssistantVisibleText: prepared.text,
         finalAssistantRawText: finalText,
+        terminalReply: hookResult.reply ? prepared.terminalReply : { disposition: "silent" },
+        providerStarted: false,
       },
     };
   }

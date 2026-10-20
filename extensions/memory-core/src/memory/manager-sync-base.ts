@@ -39,7 +39,7 @@ import {
 import { MemoryBackgroundRebuildInterruptedError } from "./manager-sync-control.js";
 import { MemorySyncOutcomeLedger } from "./manager-sync-outcome.js";
 import type { MemoryCoreRuntimeHost } from "./runtime-host.js";
-import { buildMemorySourceFilter } from "./source-filter.js";
+import { buildMemorySourceFilter, type MemorySourceFilter } from "./source-filter.js";
 
 export type MemorySyncProgressState = {
   completed: number;
@@ -98,7 +98,7 @@ export abstract class MemoryManagerSyncBase {
   protected closed = false;
 
   protected assertDatabaseMutationCurrent(database: MemoryIndexDatabase): void {
-    if (this.closed || database.closed || !database.db.isOpen || this.database !== database) {
+    if (this.closed || !database.isOpen || this.database !== database) {
       throw new Error("Memory database owner closed or changed before write admission");
     }
     if (database.readOnly) {
@@ -178,7 +178,6 @@ export abstract class MemoryManagerSyncBase {
   protected sessionWatchTimer: NodeJS.Timeout | null = null;
   protected sessionUnsubscribe: (() => void) | null = null;
   protected fallbackReason?: string;
-  protected intervalTimer: NodeJS.Timeout | null = null;
   protected dirty = false;
   protected memoryWatchGeneration = 0;
   // A success clears only the failure visible when it started. This keeps a
@@ -241,7 +240,6 @@ export abstract class MemoryManagerSyncBase {
     needsFullReindex: boolean;
     targetArchiveFiles?: string[];
     progress?: MemorySyncProgressState;
-    deferIndex?: boolean;
     prefixIndexItems?: MemoryIndexWorkItem[];
   }): Promise<void>;
 
@@ -412,7 +410,7 @@ export abstract class MemoryManagerSyncBase {
         needsFullReindex: params.needsFullSessionReindex ?? params.needsFullReindex,
         targetArchiveFiles: params.targetArchiveFiles,
         progress: params.progress,
-        ...(deferIndex ? { deferIndex: true, prefixIndexItems: memoryPlan?.indexItems } : {}),
+        ...(deferIndex ? { prefixIndexItems: memoryPlan?.indexItems } : {}),
       });
     } else if (deferIndex) {
       await this.indexQueuedFiles(memoryPlan?.indexItems ?? [], params.progress);
@@ -425,14 +423,6 @@ export abstract class MemoryManagerSyncBase {
     } else {
       this.refreshSessionDirtyFlag();
     }
-  }
-
-  protected hasIndexedChunks(): boolean {
-    return this.database.facts.hasIndexedChunks;
-  }
-
-  protected hasSemanticChunks(): boolean {
-    return this.database.facts.hasSemanticChunks;
   }
 
   protected resolveConfiguredIndexIdentity() {
@@ -494,7 +484,7 @@ export abstract class MemoryManagerSyncBase {
         : configuredProviderIdentities;
     const configuredProviderKeyKnown = configuredProviderIdentities.length > 0;
     return resolveMemoryIndexIdentityState({
-      meta: params.meta === undefined ? this.readMeta() : params.meta,
+      meta: params.meta === undefined ? this.database.facts.meta : params.meta,
       provider,
       providerKey: configuredProviderKeyKnown
         ? providerIdentities[0]?.providerKey
@@ -512,7 +502,7 @@ export abstract class MemoryManagerSyncBase {
       chunkTokens: this.settings.chunking.tokens,
       chunkOverlap: this.settings.chunking.overlap,
       vectorReady,
-      hasIndexedChunks: params.hasIndexedChunks ?? this.hasIndexedChunks(),
+      hasIndexedChunks: params.hasIndexedChunks ?? this.database.facts.hasIndexedChunks,
       ftsTokenizer: this.settings.store.fts.tokenizer,
     });
   }
@@ -601,7 +591,7 @@ export abstract class MemoryManagerSyncBase {
         : undefined;
       const database = this.database;
       const loaded = await database.prepareVector(resolvedPath, () => {
-        if (this.closed || database.closed || !database.db.isOpen) {
+        if (this.closed || !database.isOpen) {
           throw new Error("Memory database owner closed before vector preparation");
         }
       });
@@ -649,16 +639,9 @@ export abstract class MemoryManagerSyncBase {
   protected buildSourceFilter(
     alias?: string,
     sourcesOverride?: MemorySource[],
-  ): { sql: string; params: MemorySource[] } {
+    excludedSessionPaths?: readonly string[],
+  ): MemorySourceFilter {
     const sources = sourcesOverride ?? Array.from(this.sources);
-    return buildMemorySourceFilter(alias, sources);
-  }
-
-  protected readMeta(): MemoryIndexMeta | null {
-    return this.database.facts.meta;
-  }
-
-  protected writeMeta(meta: MemoryIndexMeta): Promise<void> {
-    return this.database.writeMetadata(meta);
+    return buildMemorySourceFilter(alias, sources, excludedSessionPaths);
   }
 }

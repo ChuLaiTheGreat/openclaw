@@ -3,6 +3,7 @@ import type { SqliteWorkerOperationSettlement } from "../../infra/sqlite-worker-
 import type { WorkerSessionPlacementReadResult } from "./placement-read-projection.types.js";
 import type {
   WorkerSessionPlacementRecord,
+  WorkerSessionPlacementIdentity,
   WorkerSessionTurnClaim,
   WorkerSessionTurnClaimFacts,
 } from "./placement-record.js";
@@ -24,11 +25,13 @@ export type ClaimChange = {
   | {
       kind: "claim";
       localOnly?: boolean;
+      inventoryUnchanged?: true;
       facts?: WorkerSessionTurnClaimFacts;
       workspaceResult?: WorkspaceResultPostimage;
       workspacePlacement?: WorkerSessionPlacementRecord;
       projection?: WorkerSessionPlacementReadResult;
       retired?: true;
+      retiredIdentity?: WorkerSessionPlacementIdentity;
       nativeSettlement?: Promise<SqliteWorkerOperationSettlement>;
     }
   | { kind: "workspace-result"; facts?: WorkspaceResultPostimage; cleared?: true }
@@ -52,21 +55,19 @@ export type RetainedClaim = {
   released: boolean;
   listeners: Set<() => void>;
 };
-export type RetainedPlacement = {
-  placement: WorkerSessionPlacementRecord | undefined;
-  sequence: number;
-  revoked: boolean;
-};
 export type PlacementAuthorityOwner = {
   identity: DatabasePathIdentity;
   active: boolean;
+  localClaimSessions: Set<string>;
+  localAdmissionReservations: Map<string, number>;
+  localMutationSettlements: Map<string, Set<Promise<void>>>;
+  changeListeners: Set<(placement: WorkerSessionPlacementIdentity) => void>;
   claims: Map<string, Set<RetainedClaim>>;
   placements: Map<
     string,
     { placement: WorkerSessionPlacementRecord | undefined; sequence: number }
   >;
-  observations: Map<string | undefined, Set<{ revokedBy: Set<string>; indeterminate: boolean }>>;
-  placementReaders: Map<string, Set<RetainedPlacement>>;
+  observations: Map<string | undefined, Set<{ revoked: boolean; indeterminate: boolean }>>;
   pending: Set<ClaimChange>;
   sequence: number;
   published: Map<string, number>;

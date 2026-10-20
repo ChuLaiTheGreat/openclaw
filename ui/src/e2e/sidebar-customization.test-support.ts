@@ -1,12 +1,29 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Locator, Page } from "playwright";
+import type { CronJob } from "../api/types.ts";
 import {
   takeControlUiElementScreenshot,
   takeControlUiViewportScreenshot,
 } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
+
+export function sidebarCronJob(
+  overrides: Pick<CronJob, "id" | "name"> & Partial<CronJob>,
+): CronJob {
+  return {
+    enabled: true,
+    createdAtMs: 0,
+    updatedAtMs: 0,
+    schedule: { kind: "every", everyMs: 60_000 },
+    sessionTarget: "isolated",
+    wakeMode: "now",
+    payload: { kind: "agentTurn", message: "test" },
+    state: { lastRunStatus: "error", lastError: "Provider request failed" },
+    ...overrides,
+  };
+}
 
 export function createSidebarCustomizationSuite(name: string) {
   return createControlUiE2eSuite({
@@ -76,7 +93,8 @@ export async function openSidebarCustomizationPage(
   const page = await context.newPage();
   await installMockGateway(page);
   await page.goto(`${suite.server.baseUrl}chat`);
-  await page.locator("openclaw-app-sidebar").waitFor();
+  const sidebar = page.locator("openclaw-app-sidebar");
+  await sidebar.waitFor();
   const pages = await openSidebarPages(page);
   for (const label of ["Agents", "Dashboards", "Systems"]) {
     await pages
@@ -85,10 +103,7 @@ export async function openSidebarCustomizationPage(
       .getByRole("button", { name: "Pin", exact: true })
       .click();
   }
-  await page
-    .locator("openclaw-app-sidebar")
-    .getByRole("button", { name: "Sessions", exact: true })
-    .click();
+  await sidebar.getByRole("button", { name: "Sessions", exact: true }).click();
   return { context, page };
 }
 
@@ -107,7 +122,7 @@ export async function openSidebarPinMenu(page: Page, entry = "route:dashboards")
     .locator("openclaw-app-sidebar:visible")
     .locator(`[data-sidebar-entry="${entry}"]`);
   await row.locator("a, button").first().click({ button: "right" });
-  const menu = page.locator("wa-dropdown.sidebar-rail-pin-menu");
+  const menu = page.locator(".sidebar-rail-pin-menu");
   await menu.getByRole("menuitem", { name: "Unpin", exact: true }).waitFor();
   return menu;
 }
