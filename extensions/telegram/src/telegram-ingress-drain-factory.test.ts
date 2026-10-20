@@ -1,9 +1,9 @@
+import { createDeferred } from "openclaw/plugin-sdk/concurrency-runtime";
 import type {
   PluginHookBeforeChannelIngressEvent,
   PluginHookBeforeChannelIngressResult,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../../test/helpers/promise.js";
 import { recordTelegramMessageProcessingResult } from "./bot-processing-outcome.js";
 import { TelegramMessageDispatchReplayForgetError } from "./message-dispatch-dedupe.js";
 import { createTelegramTransportIngressMonitor } from "./telegram-ingress-drain-factory.js";

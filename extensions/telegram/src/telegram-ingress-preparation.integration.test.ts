@@ -8,6 +8,7 @@ import {
 } from "openclaw/plugin-sdk/channel-ingress-test-runtime";
 import { resolveChannelGroupPolicy } from "openclaw/plugin-sdk/channel-policy";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/channel-test-helpers";
+import { createDeferred } from "openclaw/plugin-sdk/concurrency-runtime";
 import type { ChannelReplayClaimHandle } from "openclaw/plugin-sdk/persistent-dedupe";
 import type { PluginHookBeforeChannelIngressContext } from "openclaw/plugin-sdk/plugin-entry";
 import { registerVirtualTestPlugin } from "openclaw/plugin-sdk/plugin-test-contracts";
@@ -15,7 +16,6 @@ import { createHookRunner, createPluginRegistry } from "openclaw/plugin-sdk/plug
 import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { withOpenClawTestState } from "openclaw/plugin-sdk/test-state";
 import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { createDeferred } from "../../../test/helpers/promise.js";
 import {
   createTelegramHandlerAuthorization,
   type TelegramHandlerAuthorization,
