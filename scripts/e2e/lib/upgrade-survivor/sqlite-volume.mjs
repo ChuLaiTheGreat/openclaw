@@ -7,7 +7,7 @@ import {
   sqliteTranscriptPayloadColumns,
 } from "../../../lib/sqlite-transcript-payload.mjs";
 import { assert, readJson, write, writeJson } from "../fixtures/common.mjs";
-import { readPluginInstallIndex } from "../plugin-index-sqlite.mjs";
+import { readPluginInstallSummary } from "../plugin-index-sqlite.mjs";
 import { readDatabase } from "./observations.mjs";
 import {
   assertUpgradeVolumeSharedState,
@@ -49,7 +49,7 @@ export function measureVolumeDoctorBudget(stateDir) {
   readDatabase(path.join(stateDir, "state", "openclaw.sqlite"), (db) => {
     counts.cronJobs = Number(db.prepare("SELECT count(*) AS count FROM cron_jobs").get().count);
   });
-  const index = readPluginInstallIndex({ stateDir, configPath: null });
+  const index = readPluginInstallSummary({ stateDir, configPath: null });
   counts.pluginRoots = new Set(
     (index.plugins ?? []).filter((plugin) => plugin.enabled).map((plugin) => plugin.rootDir),
   ).size;

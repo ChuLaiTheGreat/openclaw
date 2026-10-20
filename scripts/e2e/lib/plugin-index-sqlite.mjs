@@ -131,7 +131,94 @@ function readPreV13SqlitePluginIndex(db) {
   };
 }
 
-function readSqlitePluginIndex(root = stateDir()) {
+// These two consumers inspect install receipts and enabled roots, not catalogue metadata.
+// Keep the full reader's aggregate cap for callers that compare the complete index.
+function pluginSummarySql(plugins) {
+  return `CASE WHEN json_type(${plugins}) = 'array' THEN (
+    SELECT json_group_array(json((
+      SELECT json_group_object(field.key, json(plugin.value -> ('$.' || field.key)))
+      FROM json_each(plugin.value) AS field
+      WHERE field.key IN ('pluginId', 'enabled', 'rootDir')
+    ))) FROM (
+      SELECT key, value FROM json_each(${plugins}) ORDER BY CAST(key AS INTEGER)
+    ) AS plugin
+  ) ELSE json(${plugins}) END`;
+}
+
+function readBoundedIndexSummary(db, table, keyColumn, key, records, plugins, diagnostics, raw) {
+  if (!tableExists(db, table)) {
+    return {};
+  }
+  const summary = `json_object(
+    'installRecords', json(${records}),
+    'plugins', json(${pluginSummarySql(plugins)})
+  )`;
+  // The CASE refuses an oversized required projection before returning its text to Node.
+  const row = db
+    .prepare(`
+    WITH projected AS (
+      SELECT ${summary} AS summary_json,
+        ${raw} AS raw_bytes,
+        octet_length(${records}) AS install_records_bytes,
+        octet_length(${plugins}) AS plugins_bytes,
+        octet_length(${diagnostics}) AS diagnostics_bytes,
+        json_array_length(${plugins}) AS plugin_count
+      FROM ${table} WHERE ${keyColumn} = ?
+    )
+    SELECT octet_length(summary_json) AS summary_bytes,
+      CASE WHEN octet_length(summary_json) <= ? THEN summary_json END AS summary_json,
+      raw_bytes, install_records_bytes, plugins_bytes, diagnostics_bytes, plugin_count
+    FROM projected
+  `)
+    .get(key, JSON_ARTIFACT_MAX_BYTES);
+  if (!row) {
+    return {};
+  }
+  assertIndexJsonByteLength(row.summary_bytes, "plugin index summary");
+  return {
+    ...parseIndexJsonText(row.summary_json, "plugin index summary"),
+    readBytes: {
+      raw: Number(row.raw_bytes),
+      summary: Number(row.summary_bytes),
+      installRecords: Number(row.install_records_bytes ?? 0),
+      plugins: Number(row.plugins_bytes ?? 0),
+      diagnostics: Number(row.diagnostics_bytes ?? 0),
+      pluginCount: Number(row.plugin_count ?? 0),
+    },
+  };
+}
+
+function readCurrentSqlitePluginSummary(db) {
+  return readBoundedIndexSummary(
+    db,
+    "config_machine_state",
+    "state_key",
+    STATE_KEY,
+    "json_extract(value_json, '$.index.installRecords')",
+    "json_extract(value_json, '$.index.plugins')",
+    "json_extract(value_json, '$.index.diagnostics')",
+    "octet_length(value_json)",
+  );
+}
+
+function readPreV13SqlitePluginSummary(db) {
+  return readBoundedIndexSummary(
+    db,
+    "installed_plugin_index",
+    "index_key",
+    PRE_V13_INDEX_KEY,
+    "install_records_json",
+    "plugins_json",
+    "diagnostics_json",
+    "octet_length(install_records_json) + octet_length(plugins_json) + octet_length(diagnostics_json)",
+  );
+}
+
+function readSqlitePluginIndex(
+  root = stateDir(),
+  readCurrent = readCurrentSqlitePluginIndex,
+  readPreV13 = readPreV13SqlitePluginIndex,
+) {
   const dbPath = sqlitePath(root);
   if (!fs.existsSync(dbPath)) {
     return {};
@@ -143,13 +230,13 @@ function readSqlitePluginIndex(root = stateDir()) {
     // v13 retired the wide row. Versioned databases must never cross-read the
     // other schema; only unversioned E2E fixtures may probe current then legacy.
     if (schemaVersion >= 13) {
-      return readCurrentSqlitePluginIndex(db);
+      return readCurrent(db);
     }
     if (schemaVersion >= 1) {
-      return readPreV13SqlitePluginIndex(db);
+      return readPreV13(db);
     }
-    const current = readCurrentSqlitePluginIndex(db);
-    return current.installRecords ? current : readPreV13SqlitePluginIndex(db);
+    const current = readCurrent(db);
+    return current.installRecords ? current : readPreV13(db);
   } catch (error) {
     if (error?.code === "ETOOBIG") {
       throw error;
@@ -160,12 +247,12 @@ function readSqlitePluginIndex(root = stateDir()) {
   }
 }
 
-export function readPluginInstallIndex(options = {}) {
+function readPluginInstallIndexWithReader(options, readSqlite) {
   const root = options.stateDir ?? stateDir();
   // Failure diagnostics may inspect the persisted index without consulting config.
   const config =
     options.configPath === null ? {} : readJsonMaybe(options.configPath ?? configPath());
-  const sqliteIndex = readSqlitePluginIndex(root);
+  const sqliteIndex = readSqlite(root);
   if (sqliteIndex.installRecords) {
     return sqliteIndex;
   }
@@ -179,6 +266,37 @@ export function readPluginInstallIndex(options = {}) {
   return {
     ...legacyIndex,
     installRecords,
+  };
+}
+
+export function readPluginInstallIndex(options = {}) {
+  return readPluginInstallIndexWithReader(options, readSqlitePluginIndex);
+}
+
+/** Complete install receipts plus only the plugin fields asserted by upgrade fixtures. */
+export function readPluginInstallSummary(options = {}) {
+  let readBytes;
+  const index = readPluginInstallIndexWithReader(options, (root) => {
+    const summary = readSqlitePluginIndex(
+      root,
+      readCurrentSqlitePluginSummary,
+      readPreV13SqlitePluginSummary,
+    );
+    if (summary.installRecords) {
+      readBytes = summary.readBytes;
+    }
+    return summary;
+  });
+  return {
+    installRecords: index.installRecords,
+    plugins: (index.plugins ?? []).map((plugin) =>
+      Object.fromEntries(
+        ["pluginId", "enabled", "rootDir"]
+          .filter((key) => Object.hasOwn(plugin, key))
+          .map((key) => [key, plugin[key]]),
+      ),
+    ),
+    ...(readBytes ? { readBytes } : {}),
   };
 }
 

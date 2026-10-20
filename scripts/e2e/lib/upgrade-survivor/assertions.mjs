@@ -18,7 +18,7 @@ import {
 } from "../../../prepublish-plugin-registry-artifact.mjs";
 import { readPositiveIntEnvWithEmptyFallback } from "../env-limits.mjs";
 import { assert, readJson, write, writeJson } from "../fixtures/common.mjs";
-import { readPluginInstallIndex } from "../plugin-index-sqlite.mjs";
+import { readPluginInstallSummary } from "../plugin-index-sqlite.mjs";
 import { recordSuccessfulUpdateCheck } from "./diagnostics.mjs";
 import {
   assertExecApprovalPolicySurvived,
@@ -1351,7 +1351,10 @@ function readMigratedSessionStore(stateDir, targetStorePath) {
 
 function readInstalledPluginIndex() {
   const stateDir = requireEnv("OPENCLAW_STATE_DIR");
-  const index = readPluginInstallIndex({ stateDir });
+  const index = readPluginInstallSummary({ stateDir });
+  if (index.readBytes) {
+    console.log(`plugin-index-summary ${JSON.stringify(index.readBytes)}`);
+  }
   assert(index.installRecords, "installed plugin index missing");
   return index;
 }
