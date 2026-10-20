@@ -181,6 +181,58 @@ def container_phase(label,command,source,proof,image,tools,store,helpers=None,ex
     if initial!=final: raise RuntimeError('Tracked source changed during '+label)
     return code
 
+RG_QUALIFICATION_CODE = r"""
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+const [version,expectedSha,expectedSize]=process.argv.slice(1);
+const binary='/tools/rg';
+if(process.platform!=='linux'||process.arch!=='x64') throw Error('Pinned rg requires linux x64');
+if(fs.statSync(binary).size!==Number(expectedSize)||crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex')!==expectedSha) throw Error('Pinned rg bytes differ');
+const v=spawnSync('rg',['--version'],{encoding:'utf8'});
+if(v.error||v.status!==0||v.stdout.split('\n')[0].split(' ')[0]!=='ripgrep'||v.stdout.split('\n')[0].split(' ')[1]!==version) throw Error('Pinned rg version/loader incompatible');
+const root=fs.mkdtempSync('/proof/rg-native-flags-');
+const roots=['src','extensions','packages','scripts'];
+const extensions=['ts','tsx','js','mjs','mts','cts','cjs'];
+const expected=[];
+for(const dir of roots){
+ fs.mkdirSync(path.join(root,dir));
+ for(const ext of extensions){const file=`${dir}/fixture.${ext}`;fs.writeFileSync(path.join(root,file),'// synthetic rg contract\n');expected.push(file);}
+ fs.writeFileSync(path.join(root,dir,'excluded.md'),'synthetic excluded file\n');
+}
+const args=['--files','--null','-g','*.{ts,tsx,js,mjs,mts,cts,cjs}',...roots];
+const scan=spawnSync('rg',args,{cwd:root,encoding:'utf8'});
+if(scan.error||scan.status!==0||!scan.stdout.endsWith('\0')) throw Error('Native rg scan flags failed');
+const actual=scan.stdout.split('\0').filter(Boolean).sort();
+if(JSON.stringify(actual)!==JSON.stringify(expected.sort())) throw Error('Native rg glob/NUL inventory differs');
+console.log(JSON.stringify({qualification:'passed',version:v.stdout.split('\n')[0],binarySha256:expectedSha,binarySize:Number(expectedSize),platform:process.platform,arch:process.arch,nativeFlags:args,matchedFiles:actual.length,pcre2Required:false}));
+"""
+
+def prepare_rg(manifest,root,tools,proof):
+    """Extract one pinned upstream MUSL executable; never run archive/host code."""
+    pin=manifest['ripgrep']
+    if pin['version']!='15.2.0':raise RuntimeError('Unreviewed ripgrep version')
+    asset='ripgrep-'+pin['version']+'-x86_64-unknown-linux-musl.tar.gz'
+    url='https://github.com/BurntSushi/ripgrep/releases/download/'+pin['version']+'/'+asset
+    if pin['archiveUrl']!=url:raise RuntimeError('Unexpected official ripgrep URL')
+    archive=root/asset;sidecar=root/(asset+'.sha256')
+    urllib.request.urlretrieve(url,archive);urllib.request.urlretrieve(url+'.sha256',sidecar)
+    if archive.stat().st_size!=pin['archiveBytes'] or digest(archive)!=pin['archiveSha256'] or digest(sidecar)!=pin['sidecarSha256']:
+        raise RuntimeError('Pinned ripgrep archive/official checksum differs')
+    if sidecar.read_text().split()!=[pin['archiveSha256'],asset]:raise RuntimeError('Official ripgrep checksum tuple differs')
+    with tarfile.open(archive) as tar:
+        wanted=asset.removesuffix('.tar.gz')+'/rg'
+        members=[v for v in tar.getmembers() if v.name==wanted]
+        if len(members)!=1 or not members[0].isfile() or members[0].issym() or members[0].size!=pin['binaryBytes']:
+            raise RuntimeError('Unexpected ripgrep member/type/size')
+        target=tools/'rg';target.write_bytes(tar.extractfile(members[0]).read())
+    if target.stat().st_size!=pin['binaryBytes'] or digest(target)!=pin['binarySha256']:raise RuntimeError('Pinned rg executable differs')
+    target.chmod(0o755)
+    receipt={**pin,'member':wanted,'extracted':'rg only; no host execution','containerQualification':'pending'}
+    (proof/'rg-provenance.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    print('RG_PROVENANCE',json.dumps(receipt),flush=True)
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--select',action='store_true');parser.add_argument('--run',choices=sorted(PHASES));args=parser.parse_args()
     m,phase,c=selection()
@@ -222,6 +274,13 @@ def main():
     for name,source in [('candidate-deps',candidate),('tooling-deps',tooling)]:
         code=container_phase(name,install,source,proof,image,tools,store if source==candidate else tooling_store)
         if code:return code
+    if phase=='sdk171315':
+        prepare_rg(m,root,tools,proof)
+        pin=m['ripgrep']
+        rg_code=container_phase('sdk-rg-qualification',['node','--input-type=module','-e',RG_QUALIFICATION_CODE,pin['version'],pin['binarySha256'],str(pin['binaryBytes'])],candidate,proof,image,tools,store)
+        if rg_code:
+            # Refuse an unusable native inventory tool before the costly eight-phase SDK run.
+            return rg_code
     env=dict(os.environ,TOOLING_ROOT=str(tooling),CANDIDATE_ROOT=str(candidate),PROOF_ROOT=str(proof/'native-package'),PNPM_TOOLS=str(tools),IMAGE_ID=image,IMAGE_PROVENANCE_FILE=str(provenance_path))
     if phase=='package178124':
         result=subprocess.run(['bash',str(HERE/'portable-package-proof.sh'),'all'],env=env).returncode

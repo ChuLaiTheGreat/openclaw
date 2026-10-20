@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "phase": "package178124",
+  "phase": "sdk171315",
   "repository": "ChuLaiTheGreat/openclaw",
   "branch": "qualification/openclaw-pr-capacity-20261020",
-  "toolingSha": "637db088c3fb0edcf516c74d63892becbbd7466e",
+  "toolingSha": "5a0b5006d5fcb72f238c3c587395bf38591971ad",
   "dockerfileSha256": "b2c59a849429c0424fd6c95c82dc373c0261893121fcc4faeebf954c7c498549",
   "baseImage": "node:24-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315",
   "pnpmArchiveSha256": "f61657f53f7891f76ae5cf11e924ee3e9ae1659affcaf7deb9622d4d7ea5637e",
@@ -16,13 +16,22 @@
     },
     "sdk171315": {
       "pr": 171315,
-      "head": "3c2d5ee969e551bd7bd9fe122406d6db750e1ceb",
-      "tree": "556950122f55805a6cf14c2cd53d38263d50a00e"
+      "head": "7b1b60779992eee09d73fb174f1a2b18e28f8bcf",
+      "tree": "0f411c8e3367a04462077192003a7cfa4e8e01f8"
     }
   },
   "packageTooling": {
     "pr": 178801,
     "parent": "5a0b5006d5fcb72f238c3c587395bf38591971ad",
     "tree": "10e70ebae01184a134d2b01eefffebb37f3f5bdc"
+  },
+  "ripgrep": {
+    "version": "15.2.0",
+    "archiveUrl": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+    "archiveSha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+    "archiveBytes": 2265718,
+    "sidecarSha256": "650080eb90718156132c821d150d8b74818f66de47969e38eef5a2dce3e2a5e6",
+    "binarySha256": "e62198eb19b136b88c330af83647b5a962cb99b6b1f066758568f12de1974849",
+    "binaryBytes": 5408904
   }
 }
