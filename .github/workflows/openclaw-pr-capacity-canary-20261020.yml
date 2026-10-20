@@ -1,0 +1,81 @@
+name: Isolated OpenClaw capacity canary
+run-name: Isolated capacity canary ${{ github.sha }}
+
+on:
+  push:
+    branches:
+      - qualification/openclaw-pr-capacity-20261020
+    paths:
+      - .github/workflows/openclaw-pr-capacity-canary-20261020.yml
+
+permissions: {}
+
+concurrency:
+  group: isolated-openclaw-capacity-canary-20261020
+  cancel-in-progress: false
+
+jobs:
+  capacity:
+    if: >-
+      github.repository == 'ChuLaiTheGreat/openclaw' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/qualification/openclaw-pr-capacity-20261020' &&
+      github.event.deleted == false &&
+      github.event.created == true &&
+      github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify disposable runner capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          import shutil
+
+          assert os.environ['GITHUB_REPOSITORY'] == 'ChuLaiTheGreat/openclaw'
+          assert os.environ['GITHUB_REF'] == 'refs/heads/qualification/openclaw-pr-capacity-20261020'
+          assert os.environ['GITHUB_EVENT_NAME'] == 'push'
+          memory = {}
+          for line in Path('/proc/meminfo').read_text().splitlines():
+              key, value = line.split(':', 1)
+              if key in ('MemTotal', 'MemAvailable'):
+                  memory[key] = int(value.split()[0]) * 1024
+          memory_limit = memory['MemTotal']
+          cpu_limit = float(len(os.sched_getaffinity(0)))
+          unified = [line.split(':', 2)[2] for line in Path('/proc/self/cgroup').read_text().splitlines()
+                     if line.startswith('0::')]
+          assert len(unified) == 1, 'Expected a unified cgroup hierarchy'
+          hierarchy = Path('/sys/fs/cgroup').resolve()
+          current = (hierarchy / unified[0].lstrip('/')).resolve()
+          assert current.is_relative_to(hierarchy) and current.is_dir()
+          while True:
+              limit = current / 'memory.max'
+              if limit.is_file():
+                  value = limit.read_text().strip()
+                  if value != 'max':
+                      memory_limit = min(memory_limit, int(value))
+              quota = current / 'cpu.max'
+              if quota.is_file():
+                  value, period = quota.read_text().split()
+                  if value != 'max':
+                      cpu_limit = min(cpu_limit, int(value) / int(period))
+              if current == hierarchy:
+                  break
+              current = current.parent
+          result = {
+              'proof': 'isolated-standard-public-runner-capacity',
+              'memoryMiB': memory['MemTotal'] // 2**20,
+              'availableMemoryMiB': memory['MemAvailable'] // 2**20,
+              'effectiveMemoryLimitMiB': memory_limit // 2**20,
+              'effectiveCpu': cpu_limit,
+              'availableDiskMiB': shutil.disk_usage(os.environ['RUNNER_TEMP']).free // 2**20,
+              'minimumMemoryMiB': 12 * 1024,
+              'minimumCpu': 2,
+              'qualified': memory_limit >= 12 * 2**30 and cpu_limit >= 2,
+          }
+          print(json.dumps(result, sort_keys=True))
+          assert result['qualified'], 'Disposable runner capacity is insufficient'
+          PYTHON
