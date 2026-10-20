@@ -7,12 +7,16 @@ describe("Telegram preparation feedback through the real reply pipeline and HTTP
     streaming: { mode: "progress" as const, progress: { commentary: true, toolProgress: true } },
   };
 
-  it("delivers a receipt before resolver history work and keeps one final preview owner", async () => {
+  it.each([true, false])("shows preparation with tool telemetry enabled=%s", async (toolProgress) => {
     await http.dispatchProgressTurn(async (options) => {
       expect([...http.visibleMessages.values()].join(" ")).toContain("Message received");
       await options?.onReplyPreparation?.("context");
       expect([...http.visibleMessages.values()].join(" ")).toContain("Preparing my reply");
-    }, { mode: "progress", toolProgress: true, telegramCfg, finalReply: { text: "Finished." } });
+    }, {
+      mode: "progress", toolProgress,
+      telegramCfg: { streaming: { mode: "progress", progress: { commentary: true, toolProgress } } },
+      finalReply: { text: "Finished." },
+    });
     expect([...http.visibleMessages.values()]).toEqual(["Finished."]);
     expect(http.calls.filter((call) => call.method === "sendMessage")).toHaveLength(1);
   });

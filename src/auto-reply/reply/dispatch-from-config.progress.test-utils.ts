@@ -59,6 +59,21 @@ describe("dispatchReplyFromConfig", () => {
     expect(dispatcher.sendFinalReply).toHaveBeenCalledOnce();
   });
 
+  it("does not enter the resolver after preparation feedback aborts its owner", async () => {
+    setNoAbort();
+    const controller = new AbortController();
+    const replyResolver = vi.fn(async () => ({ text: "Must not run" }));
+    await expect(dispatchReplyFromConfig({
+      ctx: createDirectCtx(), cfg: emptyConfig, dispatcher: createDispatcher(),
+      replyOptions: {
+        abortSignal: controller.signal,
+        onReplyPreparation: async () => { controller.abort(); return true; },
+      },
+      replyResolver,
+    })).resolves.toBeDefined();
+    expect(replyResolver).not.toHaveBeenCalled();
+  });
+
   it("keeps denied preparation silent and preserves work when feedback fails", async () => {
     for (const denied of [true, false]) {
       setNoAbort();

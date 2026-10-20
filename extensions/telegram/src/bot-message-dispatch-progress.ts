@@ -177,14 +177,12 @@ export async function handleReplyPreparation(
   }
   // Use the existing preview owner: preparation is edited into the same card,
   // and cleanup/final delivery retain their normal custody and suppression rules.
-  return await turn.progressCompositor.pushToolProgress(
-    buildTelegramProgressLine(
-      "reply-preparation",
-      "💬",
-      phase === "context" ? "Preparing my reply..." : "Message received",
-    ),
-    { startImmediately: true, flush: true },
+  const rendered = await turn.progressCompositor.pushCommentaryProgress(
+    phase === "context" ? "Preparing my reply..." : "Message received",
+    { itemId: "reply-preparation", complete: true },
   );
+  await turn.answerLane.stream?.flush();
+  return rendered;
 }
 
 export async function settleFailedFinalDelivery(turn: Turn): Promise<void> {

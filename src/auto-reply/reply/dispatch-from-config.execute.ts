@@ -172,10 +172,13 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
             : wrapProgressCallback(params.replyOptions?.onReplyPreparation);
           // Progress belongs to this dispatch, before the resolver loads history or
           // checkpoints memory. It never settles the source's final-reply obligation.
-          try {
-            await onReplyPreparation?.("accepted");
-          } catch (error) {
-            logVerbose(`reply preparation feedback failed: ${formatErrorMessage(error)}`);
+          if (onReplyPreparation) {
+            try {
+              await onReplyPreparation("accepted");
+            } catch (error) {
+              logVerbose(`reply preparation feedback failed: ${formatErrorMessage(error)}`);
+            }
+            state.assertProgressCurrent();
           }
           const result = await replyResolver(
             ctx,
