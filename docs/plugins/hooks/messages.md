@@ -23,14 +23,17 @@ Channel implementations can obtain the existing host-owned hook runner from
 
 `before_channel_ingress` prepares an admitted durable transport update before
 native attachment downloads or transcription. Telegram currently supplies it
-for `message` and `edited_message` updates after the native spool commits and claims the
-update and the ordinary native sender/group/topic gate accepts it, on both polling
-and webhook paths. Fresh messages also pass native dispatch deduplication before
-preparation; edits retain their silent native authorization path. Messages accepted
-through a native-command config grant retain their original native command handling
-and are not prepared. Other update kinds retain native
-handling. Return `{ text, suppressAttachments: true }` to dispatch prepared
-text without loading the original attachments, or return nothing to leave the
+for ordinary singleton `message` and `edited_message` updates after the native
+spool commits and claims the update and the native sender/group/topic gate accepts
+it, on both polling and webhook paths. Fresh messages also pass native dispatch
+deduplication before preparation; edits retain their silent native authorization
+and cache-only handling. Original control commands recognized by the native
+command detector, native-command config grants, and all album members bypass
+preparation. Their original payloads remain with their native command or collective
+album owners, whether the command is authorized or denied. Other update kinds
+retain native handling. Return `{ text, suppressAttachments: true }` to use prepared
+text without loading the original attachments; fresh messages continue to native
+dispatch and edits update the native reply cache. Return nothing to leave the
 update unchanged. The first preparer returning a result wins in priority order.
 
 The event's `providerUpdate` is an event-owned DTO containing channel-specific

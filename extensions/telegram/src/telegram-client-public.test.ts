@@ -29,7 +29,9 @@ it("composes the public native transport/client/throttler with actual grammY get
       );
     }
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
   const shutdown = new AbortController();
   const transport = resolveTelegramTransport();
   try {
@@ -62,6 +64,8 @@ it("composes the public native transport/client/throttler with actual grammY get
     shutdown.abort();
     await transport.close();
     server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
   }
 });

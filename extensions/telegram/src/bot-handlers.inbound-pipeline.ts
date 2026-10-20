@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
+import { hasControlCommand } from "openclaw/plugin-sdk/command-detection";
 import {
   isAbortRequestText,
   isBtwRequestText,
@@ -202,9 +203,15 @@ export function createTelegramInboundPipeline({
         return { kind: "ignored" };
       }
       dispatchDedupeClaims = dispatchDedupe.claims;
+      // Commands and albums keep their original payloads and native owners.
+      // Only ordinary singleton messages consume the bound preparer.
       if (
         !isChannelPost &&
         !gate.context.commandAuthorizedByConfig &&
+        !normalizedMsg.media_group_id &&
+        !hasControlCommand(getTelegramTextParts(normalizedMsg).text, gate.context.cfg, {
+          botUsername: ctx.me?.username?.trim().toLowerCase(),
+        }) &&
         (await prepareTelegramAuthorizedIngress(ctx.update))
       ) {
         // The factory changes only body/attachment fields on this same update.
@@ -498,6 +505,10 @@ export function createTelegramInboundPipeline({
       if (
         !isChannelPost &&
         !gate.context.commandAuthorizedByConfig &&
+        !normalizedMsg.media_group_id &&
+        !hasControlCommand(getTelegramTextParts(normalizedMsg).text, gate.context.cfg, {
+          botUsername: ctx.me?.username?.trim().toLowerCase(),
+        }) &&
         (await prepareTelegramAuthorizedIngress(ctx.update))
       ) {
         normalizedMsg = withResolvedTelegramForumFlag(ctx.editedMessage!, isForum);

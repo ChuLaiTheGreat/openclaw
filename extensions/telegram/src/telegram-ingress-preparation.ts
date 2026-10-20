@@ -29,7 +29,10 @@ export async function runWithTelegramIngressPreparation<T>(
   }
 }
 
-/** Called only after the native message gate (and fresh-message dedupe) accepts. */
+/**
+ * Prepares ordinary noncommand singletons only after native admission and,
+ * for fresh messages, dispatch deduplication. Commands and albums retain native owners.
+ */
 export async function prepareTelegramAuthorizedIngress(update: object): Promise<boolean> {
   const scope = preparations.get(update);
   if (!scope || scope.consumed) {

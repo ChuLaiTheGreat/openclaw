@@ -1,6 +1,6 @@
 // Real native admission/pipeline, grammY middleware and SQLite spool.
 // Provider media and final dispatch are synthetic; no tenant state or live transport.
-import { Bot } from "grammy";
+import { Api, Bot } from "grammy";
 import type { Message } from "grammy/types";
 import {
   createChannelIngressQueueForTests,
@@ -9,6 +9,7 @@ import {
 import { resolveChannelGroupPolicy } from "openclaw/plugin-sdk/channel-policy";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/channel-test-helpers";
 import { createDeferred } from "openclaw/plugin-sdk/concurrency-runtime";
+import * as keyedAsyncQueue from "openclaw/plugin-sdk/keyed-async-queue";
 import type { ChannelReplayClaimHandle } from "openclaw/plugin-sdk/persistent-dedupe";
 import type { PluginHookBeforeChannelIngressContext } from "openclaw/plugin-sdk/plugin-entry";
 import { registerVirtualTestPlugin } from "openclaw/plugin-sdk/plugin-test-contracts";
@@ -30,14 +31,18 @@ import {
 } from "./bot-handlers.message-pipeline.js";
 import type { RegisterTelegramHandlerParams } from "./bot-handlers.types.js";
 import { telegramBotInfoForTest } from "./bot.create-telegram-bot.test-support.js";
+import { resolveTelegramPrimaryMedia } from "./bot/helpers.js";
+import type { TelegramContext } from "./bot/types.js";
 import { resolveTelegramScopedGroupConfig } from "./group-config-helpers.js";
 import { createTelegramTransportIngressMonitor } from "./telegram-ingress-drain-factory.js";
 import { openTelegramIngressQueue } from "./telegram-ingress-spool.js";
+import { writeTelegramSpooledUpdate } from "./telegram-ingress-spool.test-support.js";
 
 const hooks = vi.hoisted(() => ({
   prepare: vi.fn(),
   getRunner: vi.fn<() => ReturnType<typeof createHookRunner> | null>(() => null),
   downloads: vi.fn(),
+  mediaResolution: vi.fn(),
   cancelled: vi.fn(),
   cfg: {
     commands: { allowFrom: { telegram: ["999999"] } },
@@ -60,8 +65,9 @@ const hooks = vi.hoisted(() => ({
 }));
 vi.mock("./runtime.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./runtime.js")>();
-  const { createPluginRuntimeMock } = await import("openclaw/plugin-sdk/channel-test-helpers");
-  const runtime = createPluginRuntimeMock();
+  const { createPluginRuntimeMock: createRuntimeMock } =
+    await import("openclaw/plugin-sdk/channel-test-helpers");
+  const runtime = createRuntimeMock();
   return {
     ...actual,
     getTelegramRuntime: () => ({
@@ -109,9 +115,19 @@ vi.mock("./telegram-ingress-drain.js", async (importOriginal) => {
 });
 // mock-isolation: Observe the media boundary without provider file downloads or transcription; all payloads and dispatch are synthetic.
 vi.mock("./bot/delivery.resolve-media.js", () => ({
-  resolveMedia: async ({ ctx }: { ctx: { message?: { voice?: { file_id: string } } } }) => {
-    if (ctx.message?.voice) hooks.downloads(ctx.message.voice.file_id);
-    return null;
+  resolveMedia: async ({ ctx }: { ctx: TelegramContext }) => {
+    hooks.mediaResolution(ctx.message);
+    const media = resolveTelegramPrimaryMedia(ctx.message);
+    if (!media) {
+      return null;
+    }
+    hooks.downloads(media.fileRef.file_id);
+    await ctx.getFile();
+    return {
+      path: `/tmp/synthetic-${media.fileRef.file_id}`,
+      contentType: media.kind === "audio" ? "audio/ogg" : "image/jpeg",
+      kind: media.kind,
+    };
   },
 }));
 
@@ -126,17 +142,56 @@ const update = () => ({
   },
 });
 
+const groupUpdate = () => {
+  const original = update();
+  return {
+    ...original,
+    message: {
+      ...original.message,
+      chat: { id: -222, type: "supergroup" as const, title: "Synthetic group", is_forum: false },
+    },
+  };
+};
+
+function albumUpdates(secondCaption: string) {
+  const original = groupUpdate();
+  return ["ordinary first", secondCaption].map((caption, index) => ({
+    update_id: original.update_id + index,
+    message: {
+      message_id: original.message.message_id + index,
+      date: original.message.date,
+      from: original.message.from,
+      chat: original.message.chat,
+      media_group_id: "synthetic-album",
+      photo: [
+        { file_id: `photo-${index}`, file_unique_id: `unique-${index}`, width: 1, height: 1 },
+      ],
+      caption,
+      caption_entities:
+        caption === "/reset@synthetic_bot"
+          ? [{ type: "bot_command" as const, offset: 0, length: caption.length }]
+          : [],
+    },
+  }));
+}
+
 async function withFixture(
   fn: (fixture: {
     queue: ReturnType<typeof openTelegramIngressQueue>;
     monitor: ReturnType<typeof createTelegramTransportIngressMonitor>;
     restart: () => ReturnType<typeof createTelegramTransportIngressMonitor>;
+    seedUpdate: (nativeUpdate: unknown) => Promise<number>;
+    waitForBufferedMedia: () => Promise<number>;
     downloads: ReturnType<typeof vi.fn>;
     bodies: string[];
     authorize: MockInstance<TelegramHandlerAuthorization["authorizeInboundMessage"]>;
     recorded: Message[];
     dedupe: MockInstance<TelegramMessagePipeline["claimMessageDispatchDedupe"]>;
     released: ChannelReplayClaimHandle[][];
+    processed: Parameters<TelegramMessagePipeline["processMessageWithReplyChain"]>[0][];
+    resolvedMedia: Parameters<TelegramMessagePipeline["recordMessageResolvedMedia"]>[0][];
+    fileRequests: MockInstance<Bot["api"]["getFile"]>;
+    replies: MockInstance<Bot["api"]["sendMessage"]>;
   }) => Promise<void>,
 ) {
   await withOpenClawTestState(
@@ -175,6 +230,10 @@ async function withFixture(
       const bodies: string[] = [];
       const recorded: Message[] = [];
       const released: ChannelReplayClaimHandle[][] = [];
+      const processed: Parameters<TelegramMessagePipeline["processMessageWithReplyChain"]>[0][] =
+        [];
+      const resolvedMedia: Parameters<TelegramMessagePipeline["recordMessageResolvedMedia"]>[0][] =
+        [];
       const bot = new Bot("123:synthetic", {
         botInfo: {
           ...telegramBotInfoForTest,
@@ -183,6 +242,16 @@ async function withFixture(
           username: "synthetic_bot",
         },
       });
+      const fileRequests = vi
+        .spyOn(Api.prototype, "getFile")
+        .mockImplementation(async (fileId) => ({
+          file_id: fileId,
+          file_unique_id: `unique-${fileId}`,
+          file_path: `${fileId}.bin`,
+        }));
+      const replies = vi
+        .spyOn(Api.prototype, "sendMessage")
+        .mockRejectedValue(new Error("unexpected synthetic Bot API reply"));
       const params = {
         nativeCommandNames: new Map([["status", "status"]]),
         accountId: "default",
@@ -233,11 +302,15 @@ async function withFixture(
             model: undefined,
           }),
           resolvePromptContextAmbientWatermark: async () => undefined,
+          recordMessageResolvedMedia: async (media) => {
+            resolvedMedia.push(media);
+          },
           recordMessageForReplyChain: async (msg) => {
             recorded.push(msg);
             return { messageId: String(msg.message_id), sender: "Synthetic", sourceMessage: msg };
           },
-          processMessageWithReplyChain: async ({ msg, dispatchDedupeClaims }) => {
+          processMessageWithReplyChain: async (processing) => {
+            const { msg, dispatchDedupeClaims } = processing;
             // The synthetic processing boundary accepts this turn. Commit the
             // real claimed keys so fresh-update replays exercise native dedupe.
             for (const claim of dispatchDedupeClaims ?? []) {
@@ -249,13 +322,25 @@ async function withFixture(
               });
               // Native dedupe permits a memory fallback. This fixture requires
               // the owned SQLite write to succeed before accepting the turn.
-              if (diskError !== undefined) throw diskError;
+              if (diskError !== undefined) {
+                throw diskError instanceof Error
+                  ? diskError
+                  : new Error("native dispatch dedupe persistence failed", { cause: diskError });
+              }
             }
+            processed.push(processing);
             bodies.push(msg.text ?? "unprepared audio");
             return { kind: "completed" as const };
           },
         },
       });
+      const bufferedMedia = vi.spyOn(keyedAsyncQueue, "enqueueKeyedTask");
+      const mediaTasks = () =>
+        bufferedMedia.mock.results.flatMap((result, index) =>
+          bufferedMedia.mock.calls[index]?.[0].key.startsWith("media:") && result.type === "return"
+            ? [Promise.resolve(result.value)]
+            : [],
+        );
       registerTelegramInboundHandlers({ bot, pipeline });
       const restart = () =>
         createTelegramTransportIngressMonitor({
@@ -271,24 +356,54 @@ async function withFixture(
           queue,
           monitor,
           restart,
+          seedUpdate: (nativeUpdate) =>
+            writeTelegramSpooledUpdate({ stateDir, accountId: "default", update: nativeUpdate }),
+          waitForBufferedMedia: async () => {
+            const tasks = mediaTasks();
+            await Promise.all(tasks);
+            // Drain idle excludes deferred album custody; await its real settlement.
+            await vi.waitFor(async () => {
+              expect(await queue.listClaims()).toEqual([]);
+              expect(await queue.listPending({ limit: "all" })).toEqual([]);
+            });
+            return tasks.length;
+          },
           downloads,
           bodies,
           authorize,
           dedupe,
           recorded,
           released,
+          processed,
+          resolvedMedia,
+          fileRequests,
+          replies,
         });
         // Claim reads can also fall back to memory. Keep legitimate preparation
         // failure diagnostics, but never qualify a broken dedupe store as proof.
         expect(
-          params.runtime.error.mock.calls.filter(([message]) =>
-            String(message).includes("[telegram] message dispatch dedupe store failed:"),
+          params.runtime.error.mock.calls.filter(([logMessage]) =>
+            String(logMessage).includes("[telegram] message dispatch dedupe store failed:"),
           ),
         ).toEqual([]);
       } finally {
-        await monitor.stop();
-        await closeOpenClawStateDatabaseAsync();
-        closeOpenClawStateDatabaseForTest();
+        // Buffered owners must finish before fixture state and spies are released.
+        try {
+          await Promise.all(mediaTasks());
+        } finally {
+          bufferedMedia.mockRestore();
+          try {
+            await monitor.stop();
+          } finally {
+            fileRequests.mockRestore();
+            replies.mockRestore();
+            try {
+              await closeOpenClawStateDatabaseAsync();
+            } finally {
+              closeOpenClawStateDatabaseForTest();
+            }
+          }
+        }
       }
     },
   );
@@ -299,6 +414,7 @@ describe("durable Telegram ingress preparation", () => {
     hooks.prepare.mockReset();
     hooks.getRunner.mockReset();
     hooks.downloads.mockReset();
+    hooks.mediaResolution.mockReset();
     hooks.cancelled.mockReset();
     vi.useRealTimers();
   });
@@ -346,6 +462,232 @@ describe("durable Telegram ingress preparation", () => {
       expect(downloads).not.toHaveBeenCalled();
       expect(recorded).toEqual([]);
       expect(bodies).toEqual([]);
+    });
+  });
+
+  it("rejects command-denied media from an admitted group sender before registered preparation", async () => {
+    const getFile = vi.fn();
+    const transcribe = vi.fn();
+    hooks.prepare.mockImplementation(async () => {
+      getFile();
+      transcribe();
+      return { text: "Must not hide the command", suppressAttachments: true };
+    });
+    await withFixture(
+      async ({ queue, monitor, authorize, fileRequests, replies, processed, recorded }) => {
+        const original = groupUpdate();
+        const denied = { ...original, message: { ...original.message, caption: "/reset" } };
+        monitor.start();
+        await monitor.admit(denied);
+        await monitor.waitForIdle();
+        expect(authorize).toHaveBeenCalledOnce();
+        await expect(authorize.mock.results[0]?.value).resolves.toMatchObject({
+          allowed: true,
+          context: { commandAuthorizedByConfig: false },
+        });
+        expect(hooks.prepare).not.toHaveBeenCalled();
+        expect(getFile).not.toHaveBeenCalled();
+        expect(transcribe).not.toHaveBeenCalled();
+        expect(hooks.mediaResolution).not.toHaveBeenCalled();
+        expect(fileRequests).not.toHaveBeenCalled();
+        expect(replies).not.toHaveBeenCalled();
+        expect(processed).toEqual([]);
+        expect(recorded).toEqual([denied.message]);
+        expect(await queue.listClaims()).toEqual([]);
+        expect(await queue.listPending({ limit: "all" })).toEqual([]);
+      },
+    );
+  });
+
+  it("prepares ordinary media from the same admitted group sender", async () => {
+    hooks.prepare.mockResolvedValue({ text: "Prepared group voice", suppressAttachments: true });
+    await withFixture(async ({ monitor, authorize, bodies, fileRequests }) => {
+      monitor.start();
+      await monitor.admit(groupUpdate());
+      await monitor.waitForIdle();
+      await expect(authorize.mock.results[0]?.value).resolves.toMatchObject({
+        allowed: true,
+        context: { commandAuthorizedByConfig: false },
+      });
+      expect(hooks.prepare).toHaveBeenCalledOnce();
+      expect(fileRequests).not.toHaveBeenCalled();
+      expect(bodies).toEqual(["Prepared group voice"]);
+    });
+  });
+
+  it.each([
+    ["message", "/reset"],
+    ["message", "[Tue 2026-06-02 12:34] /reset"],
+    ["edited_message", "/reset"],
+    ["edited_message", "[Tue 2026-06-02 12:34] /reset"],
+  ] as const)(
+    "delegates an original %s control command without preparation (%s)",
+    async (kind, text) => {
+      hooks.prepare.mockResolvedValue({
+        text: "Must not rewrite a native command",
+        suppressAttachments: true,
+      });
+      await withFixture(async ({ monitor, authorize, recorded, fileRequests, processed }) => {
+        const original = groupUpdate();
+        const command = {
+          message_id: original.message.message_id,
+          date: original.message.date,
+          from: original.message.from,
+          chat: original.message.chat,
+          text,
+          entities: [
+            { type: "bot_command" as const, offset: text.indexOf("/"), length: "/reset".length },
+          ],
+        };
+        monitor.start();
+        await monitor.admit({ update_id: original.update_id, [kind]: command });
+        await monitor.waitForIdle();
+        await expect(authorize.mock.results[0]?.value).resolves.toMatchObject({
+          allowed: true,
+          context: { commandAuthorizedByConfig: false },
+        });
+        expect(hooks.prepare).not.toHaveBeenCalled();
+        expect(recorded).toEqual([command]);
+        expect(fileRequests).not.toHaveBeenCalled();
+        expect(hooks.downloads).not.toHaveBeenCalled();
+        // Final command dispatch is synthetic here. Prove unchanged delegation,
+        // not a command-delivery denial owned by the production context builder.
+        expect(processed.map((processing) => processing.msg)).toEqual(
+          kind === "message" ? [command] : [],
+        );
+      });
+    },
+  );
+
+  it("retains album-wide command rejection before preparation or any provider media I/O", async () => {
+    const getFile = vi.fn();
+    const transcribe = vi.fn();
+    hooks.prepare.mockImplementation(async () => {
+      getFile();
+      transcribe();
+      return { text: "Must not hide the album command", suppressAttachments: true };
+    });
+    await withFixture(
+      async ({
+        queue,
+        monitor,
+        seedUpdate,
+        waitForBufferedMedia,
+        authorize,
+        fileRequests,
+        replies,
+        processed,
+        recorded,
+      }) => {
+        const originals = albumUpdates("/reset@synthetic_bot");
+        for (const original of originals) {
+          await seedUpdate(original);
+        }
+        monitor.start();
+        await monitor.waitForIdle();
+        const mediaOwners = await waitForBufferedMedia();
+        expect(authorize).toHaveBeenCalledTimes(2);
+        for (const result of authorize.mock.results) {
+          await expect(result.value).resolves.toMatchObject({
+            allowed: true,
+            context: { commandAuthorizedByConfig: false },
+          });
+        }
+        expect(hooks.prepare).not.toHaveBeenCalled();
+        expect(mediaOwners).toBe(1);
+        expect(getFile).not.toHaveBeenCalled();
+        expect(transcribe).not.toHaveBeenCalled();
+        expect(hooks.mediaResolution).not.toHaveBeenCalled();
+        expect(fileRequests).not.toHaveBeenCalled();
+        expect(replies).not.toHaveBeenCalled();
+        expect(processed).toEqual([]);
+        expect(recorded).toEqual(originals.map((original) => original.message));
+        expect(await queue.listClaims()).toEqual([]);
+        expect(await queue.listPending({ limit: "all" })).toEqual([]);
+      },
+    );
+  });
+
+  it("keeps permitted albums on native collection and delivery without preparation", async () => {
+    hooks.prepare.mockResolvedValue({
+      text: "Must not split the album",
+      suppressAttachments: true,
+    });
+    await withFixture(
+      async ({
+        queue,
+        monitor,
+        seedUpdate,
+        waitForBufferedMedia,
+        fileRequests,
+        replies,
+        processed,
+        resolvedMedia,
+      }) => {
+        const originals = albumUpdates("ordinary second");
+        for (const original of originals) {
+          await seedUpdate(original);
+        }
+        monitor.start();
+        await monitor.waitForIdle();
+        const mediaOwners = await waitForBufferedMedia();
+        expect(hooks.prepare).not.toHaveBeenCalled();
+        expect(mediaOwners).toBe(1);
+        expect(hooks.mediaResolution).toHaveBeenCalledTimes(2);
+        expect(fileRequests.mock.calls.map(([fileId]) => fileId)).toEqual(["photo-0", "photo-1"]);
+        expect(resolvedMedia).toHaveLength(2);
+        expect(processed).toHaveLength(1);
+        expect(processed[0]?.msg.caption).toBe(`ordinary first
+ordinary second`);
+        expect(processed[0]?.allMedia.map((media) => media.sourceMessageId)).toEqual(["21", "22"]);
+        expect(replies).not.toHaveBeenCalled();
+        expect(await queue.listClaims()).toEqual([]);
+        expect(await queue.listPending({ limit: "all" })).toEqual([]);
+      },
+    );
+  });
+
+  it("keeps an admitted command-denied edit in the native cache without preparation", async () => {
+    hooks.prepare.mockResolvedValue({
+      text: "Must not replace the command",
+      suppressAttachments: true,
+    });
+    await withFixture(async ({ monitor, authorize, recorded, fileRequests, processed }) => {
+      const original = groupUpdate();
+      const edited = { ...original.message, caption: "/reset" };
+      monitor.start();
+      await monitor.admit({ update_id: original.update_id, edited_message: edited });
+      await monitor.waitForIdle();
+      await expect(authorize.mock.results[0]?.value).resolves.toMatchObject({
+        allowed: true,
+        context: { commandAuthorizedByConfig: false },
+      });
+      expect(hooks.prepare).not.toHaveBeenCalled();
+      expect(recorded).toEqual([edited]);
+      expect(hooks.mediaResolution).not.toHaveBeenCalled();
+      expect(fileRequests).not.toHaveBeenCalled();
+      expect(processed).toEqual([]);
+    });
+  });
+
+  it("keeps album edits unchanged in the native cache without preparation", async () => {
+    hooks.prepare.mockResolvedValue({
+      text: "Must not replace the album",
+      suppressAttachments: true,
+    });
+    await withFixture(async ({ monitor, recorded, fileRequests, processed }) => {
+      const original = albumUpdates("ordinary second")[0];
+      if (!original) {
+        throw new Error("expected an original album member");
+      }
+      monitor.start();
+      await monitor.admit({ update_id: original.update_id, edited_message: original.message });
+      await monitor.waitForIdle();
+      expect(hooks.prepare).not.toHaveBeenCalled();
+      expect(recorded).toEqual([original.message]);
+      expect(hooks.mediaResolution).not.toHaveBeenCalled();
+      expect(fileRequests).not.toHaveBeenCalled();
+      expect(processed).toEqual([]);
     });
   });
 
@@ -414,7 +756,9 @@ describe("durable Telegram ingress preparation", () => {
       await monitor.waitForIdle();
       expect(authorize).toHaveBeenCalledOnce();
       const gate = await authorize.mock.results[0]?.value;
-      if (!gate?.allowed) throw new Error("expected native command config grant");
+      if (!gate?.allowed) {
+        throw new Error("expected native command config grant");
+      }
       expect(gate.context.commandAuthorizedByConfig).toBe(true);
       expect(hooks.prepare).not.toHaveBeenCalled();
       expect(downloads).not.toHaveBeenCalled();
@@ -528,9 +872,18 @@ describe("durable Telegram ingress preparation", () => {
       const context = rawContext as PluginHookBeforeChannelIngressContext;
       started.resolve();
       return new Promise((_resolve, reject) => {
-        context.abortSignal.addEventListener("abort", () => reject(context.abortSignal.reason), {
-          once: true,
-        });
+        context.abortSignal.addEventListener(
+          "abort",
+          () => {
+            const reason = context.abortSignal.reason;
+            reject(
+              reason instanceof Error
+                ? reason
+                : new Error("preparation aborted", { cause: reason }),
+            );
+          },
+          { once: true },
+        );
       });
     });
     await withFixture(async ({ queue, monitor, restart, downloads, bodies, dedupe, released }) => {
@@ -540,7 +893,9 @@ describe("durable Telegram ingress preparation", () => {
       expect((await queue.listClaims())[0]?.attempts).toBe(0);
       const claimed = await dedupe.mock.results[0]?.value;
       expect(claimed?.process).toBe(true);
-      if (!claimed?.process) throw new Error("expected a native dispatch claim");
+      if (!claimed?.process) {
+        throw new Error("expected a native dispatch claim");
+      }
       expect(claimed.claims).toHaveLength(1);
       expect(claimed.claims[0]?.keys.length).toBeGreaterThan(0);
       hooks.cancelled.mockImplementation(() => {
@@ -581,12 +936,16 @@ describe("durable Telegram ingress preparation", () => {
     const getFile = vi.fn();
     const transcribe = vi.fn();
     hooks.prepare.mockImplementation(async () => {
-      if (!consent.allowed) throw new Error("synthetic preparation consent revoked");
+      if (!consent.allowed) {
+        throw new Error("synthetic preparation consent revoked");
+      }
       started.resolve();
       await continuePreparation.promise;
       // This preparer owns its consent and rechecks it before private I/O.
       // The generic hook runner has no consent store or revocation detector.
-      if (!consent.allowed) throw new Error("synthetic preparation consent revoked");
+      if (!consent.allowed) {
+        throw new Error("synthetic preparation consent revoked");
+      }
       getFile();
       transcribe();
       return { text: "Must not be adopted", suppressAttachments: true };
@@ -601,7 +960,9 @@ describe("durable Telegram ingress preparation", () => {
         const gate = await authorize.mock.results[0]?.value;
         expect(gate?.allowed).toBe(true);
         const claimed = await dedupe.mock.results[0]?.value;
-        if (!claimed?.process) throw new Error("expected a native dispatch claim");
+        if (!claimed?.process) {
+          throw new Error("expected a native dispatch claim");
+        }
         expect(claimed.claims).toHaveLength(1);
         expect(claimed.claims[0]?.keys.length).toBeGreaterThan(0);
         expect(await queue.listClaims()).toHaveLength(1);

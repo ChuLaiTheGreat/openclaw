@@ -1,8 +1,9 @@
 /**
  * Event-owned provider facts before attachment loading; never requester authority.
- * Telegram runs this after its native sender/group/topic gate and fresh-message
- * dedupe, excluding native-command config grants. Final route-bound ingress
- * authority remains with the later native context builder.
+ * Telegram prepares ordinary noncommand singletons after its native sender/group/topic
+ * gate and fresh-message dedupe, excluding commands, native-command config grants,
+ * and album members. Final route-bound ingress authority remains with the later
+ * native context builder.
  */
 export type PluginHookBeforeChannelIngressEvent = {
   /** Channel-specific primitive DTO; never the transport's native journal/update object. */

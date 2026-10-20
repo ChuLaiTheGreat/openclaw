@@ -164,9 +164,12 @@ contracts above; a modifying hook is not an observation hook.
 | `before_dispatch`           | Claim         | Handle an inbound message before the normal model dispatch                     |
 | `reply_dispatch`            | Claim         | Own reply generation and dispatch instead of the default model path            |
 
-Telegram invokes `before_channel_ingress` after its native sender/group/topic
-admission gate and, for fresh messages, dispatch deduplication. Native-command
-config grants keep their original command handling without preparation. The event
+Telegram invokes `before_channel_ingress` for ordinary singleton messages and
+edits after its native sender/group/topic admission gate and, for fresh messages,
+dispatch deduplication. Original control commands recognized by the native command
+detector, native-command config grants, and album members bypass preparation and
+retain their original payloads and native owners. This applies to authorized and
+denied commands alike. Edits retain their native cache-only handling. The event
 contains transport facts, not final route-bound requester authority; that remains
 with the native context builder. See [Message hooks](/plugins/hooks/messages#message-hooks)
 for preparation and consent boundaries.

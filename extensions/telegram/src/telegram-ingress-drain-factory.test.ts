@@ -65,15 +65,17 @@ function fixture() {
   // This unit fixture owns factory projection/lifecycle only. The SQLite sibling
   // exercises the real native admission gate before consuming this bridge.
   const bot = {
-    handleUpdate: vi.fn(async (update: object) => {
-      await prepareTelegramAuthorizedIngress(update);
-      downstream(update);
+    handleUpdate: vi.fn(async (nativeUpdate: object) => {
+      await prepareTelegramAuthorizedIngress(nativeUpdate);
+      downstream(nativeUpdate);
     }),
     api: { answerCallbackQuery: vi.fn() },
   };
   createTelegramTransportIngressMonitor({ bot, accountId: "account-a" });
   const invocation = mocks.monitor.mock.calls[0];
-  if (!invocation) throw new Error("expected durable ingress monitor registration");
+  if (!invocation) {
+    throw new Error("expected durable ingress monitor registration");
+  }
   const dispatch: Dispatch = invocation[0].dispatch;
   return { update, bot, dispatch, lifecycle, controller, downstream };
 }
@@ -198,15 +200,20 @@ describe("Telegram native ingress preparation", () => {
     expect(f.update.message).not.toHaveProperty("caption_entities");
   });
 
-  it("removes album membership when attachments are intentionally suppressed", async () => {
+  it("delegates an album intact when native middleware retains its collective owner", async () => {
     const f = fixture();
     Object.assign(f.update.message, { media_group_id: "synthetic-album" });
-    mocks.prepare.mockResolvedValue({ text: "Prepared album text", suppressAttachments: true });
+    const originalMessage = f.update.message;
+    f.bot.handleUpdate.mockImplementation(async (nativeUpdate: object) => {
+      f.downstream(nativeUpdate);
+    });
     await f.dispatch(f.update, f.lifecycle);
-    expect(f.update.message).toMatchObject({ text: "Prepared album text" });
-    expect(f.update.message).not.toHaveProperty("media_group_id");
-    expect(f.update.message).not.toHaveProperty("voice");
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(f.update.message).toBe(originalMessage);
+    expect(f.update.message).toHaveProperty("media_group_id", "synthetic-album");
+    expect(f.update.message).toHaveProperty("voice");
     expect(f.bot.handleUpdate).toHaveBeenCalledWith(f.update);
+    expect(f.downstream).toHaveBeenCalledWith(f.update);
   });
 
   it("rejects late prepared text after the native owner aborts", async () => {
@@ -255,7 +262,9 @@ describe("Telegram native ingress preparation", () => {
         try {
           await prepareTelegramAuthorizedIngress(update);
         } catch {
-          if (mode === "throw") throw failure;
+          if (mode === "throw") {
+            throw failure;
+          }
           recordTelegramMessageProcessingResult({ kind: "failed-retryable", error: failure });
         }
       });
