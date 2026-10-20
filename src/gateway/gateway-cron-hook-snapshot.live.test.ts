@@ -37,7 +37,7 @@ describeLive("cron snapshot revisions through an isolated Gateway", () => {
   it("retains the executing revision across a persisted edit, then projects the new run and omits non-cron facts", async ({
     signal,
   }) => {
-    const entered = createDeferred<void>();
+    const entered = createDeferred();
     let heldResponse: ServerResponse | undefined;
     let providerRequests = 0;
     const receiver = await reserveTestPortListener({
@@ -179,7 +179,7 @@ module.exports = { id: ${JSON.stringify(PLUGIN_ID)}, register(api) {
           role: "operator",
           scopes: ["operator.admin", "operator.read", "operator.write"],
           deviceIdentity: loadOrCreateDeviceIdentity({
-            path: instance.state.path("proof-client", "credentials.sqlite"),
+            path: instance.state.path("proof-client", "client", "credentials.sqlite"),
           }),
           onEvent: (event) => {
             if (
@@ -187,8 +187,9 @@ module.exports = { id: ${JSON.stringify(PLUGIN_ID)}, register(api) {
               isRecord(event.payload) &&
               event.payload.jobId === jobId &&
               event.payload.action === "finished"
-            )
+            ) {
               finished.resolve(event.payload);
+            }
           },
           signal,
         });
