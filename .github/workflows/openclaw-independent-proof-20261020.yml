@@ -7,6 +7,7 @@ on:
       - .github/qualification/openclaw-pr-proof-20261020/**
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   select:
     if: github.repository == 'ChuLaiTheGreat/openclaw' && github.event_name == 'push' && github.ref == 'refs/heads/qualification/openclaw-pr-capacity-20261020' && !github.event.deleted && github.run_attempt == 1
@@ -40,6 +41,8 @@ jobs:
           package-manager-cache: false
       - name: Native published-package upgrade proof
         shell: bash
+        env:
+          QUALIFICATION_GITHUB_READ_TOKEN: ${{ github.token }}
         run: python3 .github/qualification/openclaw-pr-proof-20261020/portable-proof-bootstrap.py --run package178124
   sdk171315:
     needs: select
@@ -59,4 +62,6 @@ jobs:
           package-manager-cache: false
       - name: Native SDK exports build profiler API and boundary proof
         shell: bash
+        env:
+          QUALIFICATION_GITHUB_READ_TOKEN: ${{ github.token }}
         run: python3 .github/qualification/openclaw-pr-proof-20261020/portable-proof-bootstrap.py --run sdk171315

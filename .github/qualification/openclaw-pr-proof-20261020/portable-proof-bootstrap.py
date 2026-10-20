@@ -88,9 +88,11 @@ def capacity():
         raise RuntimeError('Runner capacity is insufficient; do not weaken native checks')
     return receipt
 
-def public_candidate(m,c):
+def public_candidate(m,c,read_token=None):
     url = f'https://api.github.com/repos/openclaw/openclaw/pulls/{c["pr"]}'
-    req = urllib.request.Request(url, headers={'Accept':'application/vnd.github+json','User-Agent':'OpenClaw-independent-native-qualification'})
+    headers={'Accept':'application/vnd.github+json','User-Agent':'OpenClaw-independent-native-qualification'}
+    if read_token: headers['Authorization']='Bearer '+read_token
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as response: row=json.load(response)
     if row['head']['sha'] != c['head'] or row['head']['repo']['full_name'] != m['repository'] or row['state'] != 'open' or row['draft']:
         raise RuntimeError('Public PR no longer matches the reviewed ready candidate')
@@ -242,8 +244,11 @@ def main():
     if args.run!=phase: raise RuntimeError('Requested phase differs from committed enum')
     if os.environ.get('GITHUB_REPOSITORY')!=m['repository'] or os.environ.get('GITHUB_EVENT_NAME')!='push' or os.environ.get('GITHUB_REF')!='refs/heads/'+m['branch'] or os.environ.get('GITHUB_RUN_ATTEMPT')!='1':
         raise RuntimeError('Unexpected actual workflow identity; never spoof GitHub context')
-    cap=capacity();public=public_candidate(m,c)
-    public_tooling=public_candidate(m,{'pr':m['packageTooling']['pr'],'head':m['toolingSha']}) if phase=='package178124' else None
+    # Consume the job's read-only token before any subprocess or candidate checkout.
+    read_token=os.environ.pop('QUALIFICATION_GITHUB_READ_TOKEN',None)
+    cap=capacity();public=public_candidate(m,c,read_token)
+    public_tooling=public_candidate(m,{'pr':m['packageTooling']['pr'],'head':m['toolingSha']},read_token) if phase=='package178124' else None
+    read_token=None
     root=Path(os.environ['RUNNER_TEMP'])/('openclaw-native-'+phase+'-'+c['head'][:12]);root.mkdir(mode=0o700)
     proof=root/'proof';proof.mkdir(mode=0o700)
     (proof/'capacity.json').write_text(json.dumps(cap)+'\n');(proof/'public-candidate.json').write_text(json.dumps(public)+'\n')
