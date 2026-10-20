@@ -166,13 +166,13 @@ export async function handleReplyPreparation(
   ) {
     return false;
   }
-  const reaction = turn.telegramCfg.ackReaction ?? turn.cfg.messages?.ackReaction;
   if (
     phase === "accepted" &&
-    turn.cfg.messages?.ackReactionScope === "all" &&
-    typeof reaction === "string" &&
-    reaction.trim()
+    (await turn.context.ackReactionPromise?.catch(() => false)) === true
   ) {
+    return false;
+  }
+  if (!canPushProgress(turn)) {
     return false;
   }
   // Use the existing preview owner: preparation is edited into the same card,

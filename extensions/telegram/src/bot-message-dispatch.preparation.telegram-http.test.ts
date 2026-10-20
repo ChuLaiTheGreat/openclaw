@@ -21,14 +21,15 @@ describe("Telegram preparation feedback through the real reply pipeline and HTTP
     expect(http.calls.filter((call) => call.method === "sendMessage")).toHaveLength(1);
   });
 
-  it("lets an all-message reaction replace the receipt while retaining preparation feedback", async () => {
+  it.each([true, false])("uses the channel acknowledgment outcome=%s", async (acknowledged) => {
+    const context = http.createContext();
+    context.ackReactionPromise = Promise.resolve(acknowledged);
     await http.dispatchProgressTurn(async (options) => {
-      expect(http.visibleMessages.size).toBe(0);
+      expect(http.visibleMessages.size).toBe(acknowledged ? 0 : 1);
       await options?.onReplyPreparation?.("context");
       expect([...http.visibleMessages.values()].join(" ")).toContain("Preparing my reply");
     }, {
-      mode: "progress", toolProgress: true, telegramCfg,
-      cfg: { messages: { ackReactionScope: "all", ackReaction: "👍" } },
+      mode: "progress", toolProgress: true, telegramCfg, context,
       finalReply: { text: "Finished." },
     });
     expect([...http.visibleMessages.values()]).toEqual(["Finished."]);
