@@ -1,5 +1,9 @@
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import type { ReplyPayload } from "../auto-reply/types.js";
+import {
+  copyReplyPayloadMetadata,
+  setReplyPayloadMetadata,
+  type ReplyPayload,
+} from "../auto-reply/reply-payload.js";
 import type { PersistedUserTurnMessage } from "../sessions/user-turn-transcript.types.js";
 import type { UserTranscriptContext } from "./embedded-agent-runner/run/attempt-history.js";
 
@@ -18,10 +22,10 @@ export function resolveAssistantReplySource(
   }
   const firstUser: PersistedUserTurnMessage = first;
   const lastUser: PersistedUserTurnMessage = last;
-  const firstTransport = asOptionalRecord(firstUser.__openclaw?.transport);
-  const transport = asOptionalRecord(lastUser.__openclaw?.transport);
-  const firstSender = asOptionalRecord(firstUser.__openclaw?.senderIdentity);
-  const sender = asOptionalRecord(lastUser.__openclaw?.senderIdentity);
+  const firstTransport = asOptionalRecord(firstUser["__openclaw"]?.transport);
+  const transport = asOptionalRecord(lastUser["__openclaw"]?.transport);
+  const firstSender = asOptionalRecord(firstUser["__openclaw"]?.senderIdentity);
+  const sender = asOptionalRecord(lastUser["__openclaw"]?.senderIdentity);
   if (
     (lastUser.provenance?.kind && lastUser.provenance.kind !== "external_user") ||
     transport?.channel !== "telegram" ||
@@ -46,5 +50,8 @@ export function withAssistantReplySource<T extends ReplyPayload>(payload: T, sou
   ) {
     return payload;
   }
-  return { ...payload, replyToId: source };
+  return setReplyPayloadMetadata(
+    copyReplyPayloadMetadata(payload, { ...payload, replyToId: source }),
+    { replyToIdExplicit: Boolean(payload.replyToCurrent || payload.replyToTag) },
+  );
 }

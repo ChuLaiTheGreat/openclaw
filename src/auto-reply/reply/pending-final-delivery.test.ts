@@ -1,10 +1,13 @@
 // Tests pending final delivery records and deferred message-tool send behavior.
+import { expectDefined } from "@openclaw/normalization-core/expect";
 import { describe, expect, it } from "vitest";
+import { withAssistantReplySource } from "../../agents/embedded-agent-reply-source.js";
 import {
   INTERNAL_RUNTIME_CONTEXT_BEGIN,
   INTERNAL_RUNTIME_CONTEXT_END,
 } from "../../agents/internal-runtime-context.js";
-import { setReplyPayloadMetadata } from "../reply-payload.js";
+import { projectAssistantTranscriptText } from "../../config/sessions/transcript-assistant-delivery-read.js";
+import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
 import { markInboundContextLabel } from "./inbound-context-marker.js";
 import {
   classifyHeartbeatPendingFinalDelivery,
@@ -16,6 +19,7 @@ import {
   normalizePendingFinalRecoveryPayloads,
   resolvePendingFinalDeliveryCompletion,
 } from "./pending-final-delivery.js";
+import { applyReplyThreading } from "./reply-payloads-base.js";
 
 describe("resolvePendingFinalDeliveryCompletion", () => {
   it("persists the session writer authority with durable final custody", () => {
@@ -170,6 +174,85 @@ describe("normalizePendingFinalRecoveryPayloads", () => {
     setReplyPayloadMetadata(explicitReply, { replyToIdExplicit: true });
     expect(buildRecoverablePendingFinalDeliveryText([explicitReply])).toBeUndefined();
   });
+
+  it.each(["first", "all"] as const)(
+    "keeps a producer-selected implicit source replayable through final threading (%s)",
+    (replyToMode) => {
+      const payload = withAssistantReplySource({ text: "Replayable answer" }, "101");
+      const finals = applyReplyThreading({
+        payloads: [payload],
+        replyToMode,
+        replyToChannel: "telegram",
+        currentMessageId: "103",
+      });
+      expect(finals[0]?.replyToId).toBe("101");
+      expect(
+        buildRecoverablePendingFinalDeliveryText(normalizePendingFinalRecoveryPayloads(finals)),
+      ).toBe("Replayable answer");
+    },
+  );
+
+  it("retains explicit inline quotes after capturing an implicit source", () => {
+    const payload = withAssistantReplySource({ text: "[[reply_to:90]] Explicit answer" }, "101");
+    const finals = applyReplyThreading({
+      payloads: [payload],
+      replyToMode: "all",
+      replyToChannel: "telegram",
+      currentMessageId: "103",
+    });
+    expect(finals[0]).toMatchObject({ text: "Explicit answer", replyToId: "90", replyToTag: true });
+    expect(
+      getReplyPayloadMetadata(expectDefined(finals[0], "prepared final"))?.replyToIdExplicit,
+    ).toBe(true);
+    expect(buildRecoverablePendingFinalDeliveryText(finals)).toBeUndefined();
+  });
+
+  it.each([
+    {
+      name: "old text-only transcript",
+      transcript: '{"role":"assistant","content":[{"type":"text","text":"Stored answer"}]}',
+      expectedTarget: "103",
+      expectedText: "Stored answer",
+    },
+    {
+      name: "old explicit quote",
+      transcript:
+        '{"role":"assistant","content":[{"type":"text","text":"Stored answer"}],"openclawDelivery":{"replyToId":"90"}}',
+      expectedTarget: "90",
+      expectedText: undefined,
+    },
+    {
+      name: "new implicit source",
+      transcript:
+        '{"role":"assistant","content":[{"type":"text","text":"Stored answer"}],"openclawDelivery":{"sourceMessageId":"101"}}',
+      expectedTarget: "101",
+      expectedText: "Stored answer",
+    },
+  ])(
+    "loads $name through final reply preparation",
+    ({ transcript, expectedTarget, expectedText }) => {
+      const stored: unknown = JSON.parse(transcript);
+      const projected = projectAssistantTranscriptText(stored);
+      expect(projected?.text).toBe("Stored answer");
+      const payload = withAssistantReplySource(
+        {
+          text: projected?.text,
+          ...(projected?.openclawDelivery?.replyToId
+            ? { replyToId: projected.openclawDelivery.replyToId }
+            : {}),
+        },
+        projected?.openclawDelivery?.sourceMessageId,
+      );
+      const finals = applyReplyThreading({
+        payloads: [payload],
+        replyToMode: "all",
+        replyToChannel: "telegram",
+        currentMessageId: "103",
+      });
+      expect(finals[0]?.replyToId).toBe(expectedTarget);
+      expect(buildRecoverablePendingFinalDeliveryText(finals)).toBe(expectedText);
+    },
+  );
 
   it("refuses multi-payload media finals because text recovery loses payload boundaries", () => {
     expect(

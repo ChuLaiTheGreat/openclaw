@@ -12,8 +12,8 @@ import {
   type AgentAssistantSourceReceipt,
 } from "../infra/agent-events.js";
 import { normalizeTextForComparison } from "./embedded-agent-helpers/messaging-dedupe.js";
-import { withAssistantReplySource } from "./embedded-agent-reply-source.js";
 import type { BlockReplyPayload } from "./embedded-agent-payloads.js";
+import { withAssistantReplySource } from "./embedded-agent-reply-source.js";
 import { runBestEffortCallback } from "./embedded-agent-subscribe.callback.js";
 import {
   consumePendingAssistantReplyDirectivesIntoReply,
@@ -468,7 +468,6 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
       });
     }
     const sourcePayload = withAssistantReplySource(blockPayload, state.assistantReplyToId);
-    copyReplyPayloadMetadata(blockPayload, sourcePayload);
     const taggedPayload =
       options?.assistantMessageIndex !== undefined
         ? setReplyPayloadMetadata(sourcePayload, {
