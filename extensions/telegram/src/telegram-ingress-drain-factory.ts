@@ -8,6 +8,8 @@ import {
   createTelegramIngressMonitor,
   resolveTelegramAdoptionStallTimeoutMs,
 } from "./telegram-ingress-drain.js";
+import { resolveTelegramIngressNonRetryableFailure } from "./telegram-ingress-non-retryable.js";
+import { runWithTelegramIngressPreparation } from "./telegram-ingress-preparation.js";
 import { openTelegramIngressQueue } from "./telegram-ingress-spool.js";
 
 type TelegramSpooledBot = {
@@ -38,7 +40,10 @@ function providerPrimitive(value: unknown) {
 // This is the channel's hook event DTO, not its native update/journal object.
 // All nested fields are provider primitives owned by the event itself.
 function projectPreparationUpdate(update: Record<string, unknown>, kind: string) {
-  const original = update[kind] as Record<string, unknown>;
+  const original = update[kind];
+  if (!isRecord(original)) {
+    throw new Error("Telegram preparation requires a message update");
+  }
   const from = isRecord(original.from) ? original.from : {};
   const chat = isRecord(original.chat) ? original.chat : {};
   const message: Record<string, unknown> = {
@@ -105,67 +110,98 @@ export function createTelegramTransportIngressMonitor(
       void startTelegramCallbackQueryAnswer(params.bot, callbackQueryId, context.isNew);
     },
     dispatch: async (update, lifecycle) => {
-      const hookRunner = getGlobalHookRunner();
-      const messageKind =
-        isRecord(update) && isRecord(update.message) ? "message" : "edited_message";
-      if (
-        isRecord(update) &&
-        isRecord(update[messageKind]) &&
-        hookRunner?.hasHooks("before_channel_ingress")
-      ) {
-        let prepared: Awaited<ReturnType<typeof hookRunner.runBeforeChannelIngress>>;
-        try {
-          prepared = await hookRunner.runBeforeChannelIngress(
-            { providerUpdate: projectPreparationUpdate(update, messageKind) },
-            {
-              channelId: "telegram",
-              accountId: params.accountId,
-              abortSignal: lifecycle.abortSignal,
-              heartbeat: () => lifecycle.onDeferredHeartbeat?.(),
-              heartbeatIntervalMs: lifecycle.deferredHeartbeatIntervalMs,
-            },
-          );
-          lifecycle.abortSignal.throwIfAborted();
-        } catch (error) {
-          if (lifecycle.abortSignal.aborted) {
-            // Native cancellation reopens the original row without spending a retry.
-            // The lifecycle owner retains watchdog/supersede disposition.
-            await lifecycle.onCancelled();
-          }
-          throw error;
-        }
-        if (prepared !== undefined) {
-          // Only body/attachment fields are prepared. The transport identity, routing,
-          // reply metadata and original update object stay owned by native ingress.
-          const message: Record<string, unknown> = { ...update[messageKind], text: prepared.text };
-          delete message.entities;
-          delete message.caption_entities;
-          if (prepared.suppressAttachments) {
-            for (const field of [
-              "media_group_id",
-              "voice",
-              "audio",
-              "photo",
-              "video",
-              "video_note",
-              "document",
-              "animation",
-              "sticker",
-              "caption",
-              "caption_entities",
-            ]) {
-              delete message[field];
+      let preparationCancelled = false;
+      let processingError: unknown;
+      try {
+        return await runWithTelegramIngressPreparation(
+          update,
+          async () => {
+            const hookRunner = getGlobalHookRunner();
+            const messageKind =
+              isRecord(update) && isRecord(update.message) ? "message" : "edited_message";
+            if (
+              isRecord(update) &&
+              isRecord(update[messageKind]) &&
+              hookRunner?.hasHooks("before_channel_ingress")
+            ) {
+              let prepared: Awaited<ReturnType<typeof hookRunner.runBeforeChannelIngress>>;
+              try {
+                lifecycle.abortSignal.throwIfAborted();
+                prepared = await hookRunner.runBeforeChannelIngress(
+                  { providerUpdate: projectPreparationUpdate(update, messageKind) },
+                  {
+                    channelId: "telegram",
+                    accountId: params.accountId,
+                    abortSignal: lifecycle.abortSignal,
+                    heartbeat: () => lifecycle.onDeferredHeartbeat?.(),
+                    heartbeatIntervalMs: lifecycle.deferredHeartbeatIntervalMs,
+                  },
+                );
+                lifecycle.abortSignal.throwIfAborted();
+              } catch (error) {
+                if (lifecycle.abortSignal.aborted) {
+                  // Reopen only after native middleware releases its dispatch-dedupe claims.
+                  preparationCancelled = true;
+                }
+                throw error;
+              }
+              if (prepared !== undefined) {
+                // Only body/attachment fields are prepared. The transport identity, routing,
+                // reply metadata and original update object stay owned by native ingress.
+                const message: Record<string, unknown> = {
+                  ...update[messageKind],
+                  text: prepared.text,
+                };
+                delete message.entities;
+                delete message.caption_entities;
+                if (prepared.suppressAttachments) {
+                  for (const field of [
+                    "media_group_id",
+                    "voice",
+                    "audio",
+                    "photo",
+                    "video",
+                    "video_note",
+                    "document",
+                    "animation",
+                    "sticker",
+                    "caption",
+                    "caption_entities",
+                  ]) {
+                    delete message[field];
+                  }
+                }
+                update[messageKind] = message;
+                return true;
+              }
             }
-          }
-          update[messageKind] = message;
+            return false;
+          },
+          async () => {
+            // grammY returns void, so carry its middleware-owned outcome back to durable ingress.
+            // The spooled lifecycle remains on its existing frame for complete-at-adoption.
+            const { result } = await runWithTelegramUpdateProcessingFrame(async () => {
+              await params.bot.handleUpdate(update as never);
+            });
+            if (result?.kind === "failed-retryable") {
+              processingError = result.error;
+            }
+            return result;
+          },
+        );
+      } catch (error) {
+        processingError = error;
+        throw error;
+      } finally {
+        if (
+          preparationCancelled &&
+          resolveTelegramIngressNonRetryableFailure(processingError)?.reason !==
+            "dispatch-dedupe-rollback-failed"
+        ) {
+          // The native handler has now rolled back its dispatch-dedupe claims.
+          await lifecycle.onCancelled();
         }
       }
-      // grammY returns void, so carry its middleware-owned outcome back to durable ingress.
-      // The spooled lifecycle remains on its existing frame for complete-at-adoption.
-      const { result } = await runWithTelegramUpdateProcessingFrame(async () => {
-        await params.bot.handleUpdate(update as never);
-      });
-      return result;
     },
   });
 }

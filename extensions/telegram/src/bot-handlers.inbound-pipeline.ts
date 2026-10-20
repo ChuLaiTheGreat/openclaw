@@ -54,6 +54,7 @@ import type { TelegramGetChat } from "./bot/types.js";
 import { resolveTelegramCommandIngressAuthorization } from "./ingress.js";
 import { emitTelegramLiveLocationMessageHook } from "./location-message-hook.js";
 import { isTelegramControlLaneText } from "./sequential-key.js";
+import { prepareTelegramAuthorizedIngress } from "./telegram-ingress-preparation.js";
 
 export function createTelegramInboundPipeline({
   params: handlerParams,
@@ -132,7 +133,7 @@ export function createTelegramInboundPipeline({
     }
     const isGroup = isChannelPost || msg.chat.type === "group" || msg.chat.type === "supergroup";
     const isForum = isChannelPost ? false : await resolveForumFlag(msg, isGroup);
-    const normalizedMsg = isChannelPost
+    let normalizedMsg = isChannelPost
       ? normalizeChannelPostMessage(msg)
       : withResolvedTelegramForumFlag(msg, isForum);
     const botUserId = resolveBotUserId(ctx);
@@ -142,7 +143,7 @@ export function createTelegramInboundPipeline({
       return { kind: "ignored" };
     }
     const chatId = normalizedMsg.chat.id;
-    const syntheticContext = buildSyntheticContext(ctx, normalizedMsg);
+    let syntheticContext = buildSyntheticContext(ctx, normalizedMsg);
     const senderId =
       isChannelPost && msg.sender_chat?.id != null
         ? String(msg.sender_chat.id)
@@ -201,6 +202,16 @@ export function createTelegramInboundPipeline({
         return { kind: "ignored" };
       }
       dispatchDedupeClaims = dispatchDedupe.claims;
+      if (
+        !isChannelPost &&
+        !gate.context.commandAuthorizedByConfig &&
+        (await prepareTelegramAuthorizedIngress(ctx.update))
+      ) {
+        // The factory changes only body/attachment fields on this same update.
+        // Keep the native forum facts and rebuild the context before cache/media I/O.
+        normalizedMsg = withResolvedTelegramForumFlag(ctx.message!, isForum);
+        syntheticContext = buildSyntheticContext(ctx, normalizedMsg);
+      }
       await recordMessageForReplyChain(normalizedMsg, gate.context.threadSpec, botUserId);
       const mediaInput = {
         authorizationCfg: gate.context.cfg,
@@ -473,7 +484,7 @@ export function createTelegramInboundPipeline({
     }
     const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
     const isForum = await resolveForumFlag(msg, isGroup);
-    const normalizedMsg = withResolvedTelegramForumFlag(msg, isForum);
+    let normalizedMsg = withResolvedTelegramForumFlag(msg, isForum);
     const gate = await authorizeInboundMessage({
       msg: normalizedMsg,
       chatId: normalizedMsg.chat.id,
@@ -484,6 +495,13 @@ export function createTelegramInboundPipeline({
       dmAccess: "silent",
     });
     if (gate.allowed) {
+      if (
+        !isChannelPost &&
+        !gate.context.commandAuthorizedByConfig &&
+        (await prepareTelegramAuthorizedIngress(ctx.update))
+      ) {
+        normalizedMsg = withResolvedTelegramForumFlag(ctx.editedMessage!, isForum);
+      }
       await recordMessageForReplyChain(normalizedMsg, gate.context.threadSpec, botUserId);
       if (typeof updateId === "number") {
         emitTelegramLiveLocationMessageHook({

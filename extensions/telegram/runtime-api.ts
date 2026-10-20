@@ -54,7 +54,7 @@ export {
 } from "./src/exec-approval-forwarding.js";
 export { telegramMessageActions } from "./src/channel-actions.js";
 export { monitorTelegramProvider } from "./src/monitor.js";
-export { createTelegramClientFetch } from "./src/client-fetch.js";
+export { asTelegramClientFetch, createTelegramClientFetch } from "./src/client-fetch.js";
 export { getOrCreateAccountThrottler } from "./src/account-throttler.js";
 export { probeTelegram } from "./src/probe.js";
 export {

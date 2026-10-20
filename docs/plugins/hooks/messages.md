@@ -21,10 +21,14 @@ Channel implementations can obtain the existing host-owned hook runner from
 `openclaw/plugin-sdk/plugin-hook-runtime`. This focused subpath avoids the deprecated
 `plugin-runtime` barrel and does not create or expose another registry.
 
-`before_channel_ingress` prepares a durable transport update before native
-middleware downloads or transcribes attachments. Telegram currently supplies it
+`before_channel_ingress` prepares an admitted durable transport update before
+native attachment downloads or transcription. Telegram currently supplies it
 for `message` and `edited_message` updates after the native spool commits and claims the
-update, on both polling and webhook paths. Other update kinds retain native
+update and the ordinary native sender/group/topic gate accepts it, on both polling
+and webhook paths. Fresh messages also pass native dispatch deduplication before
+preparation; edits retain their silent native authorization path. Messages accepted
+through a native-command config grant retain their original native command handling
+and are not prepared. Other update kinds retain native
 handling. Return `{ text, suppressAttachments: true }` to dispatch prepared
 text without loading the original attachments, or return nothing to leave the
 update unchanged. The first preparer returning a result wins in priority order.
@@ -34,9 +38,15 @@ primitive identity, text/caption and attachment facts. It never aliases the nati
 transport update. Telegram includes sender/chat IDs, bot flag, message/update IDs,
 thread/reply IDs and media IDs/size; it excludes channel credentials. Treat its
 sender, chat, message, and update identifiers as **untrusted transport facts**,
-not authenticated requester authority. The channel has not performed ordinary
-binding/allowlist checks yet; plugins must verify their own consent and target
-binding before processing content. Never mutate this event. Registration honors
+not authenticated requester authority. Telegram has applied its ordinary sender/group/topic allowlist checks, but final
+route-bound ingress evidence is still owned by the later native context builder.
+Plugins must verify their own consent and target binding before processing content.
+A preparer awaiting work must recheck its own consent before private I/O and before
+returning prepared content; if that consent is revoked, reject the preparation.
+The generic hook host has no consent store or automatic revocation detector.
+A rejection leaves the original update with the native retry owner; it does not
+authorize a later retry to bypass the preparer's consent check.
+Never mutate this event. Registration honors
 the existing `allowConversationAccess` policy. No bot token or
 other channel credential is provided. The result can change only body and
 attachment fields; native transport identity, routing, and reply metadata remain
@@ -52,9 +62,13 @@ rather than repeating accepted or uncertain operations. Scope closure fences
 late results; it does not cancel previously accepted external work.
 
 For private Telegram preparation clients, the activated Telegram `runtime-api.js`
-public surface exports `createTelegramClientFetch` and `getOrCreateAccountThrottler`.
-Compose the former with the native transport and the service shutdown signal;
-install the latter's `.transformer` on the grammY API client. This preserves
+public surface exports `asTelegramClientFetch`, `createTelegramClientFetch`, and
+`getOrCreateAccountThrottler`. Compose `createTelegramClientFetch` with the native
+transport and the service shutdown signal. Use the existing `asTelegramClientFetch`
+type adapter both for the transport fetch passed into the wrapper and for its
+result passed to grammY: grammY's Node types include the `node-fetch` namespace,
+while the native transport and wrapper provide callable fetch implementations.
+Install the throttler's `.transformer` on the grammY API client. This preserves
 native request/body deadlines, cancellation, and token-scoped flood waits.
 The service owns and closes its transport on shutdown and startup failure.
 

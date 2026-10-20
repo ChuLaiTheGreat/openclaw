@@ -31,6 +31,14 @@ import type {
   PluginHookGatewayStopEvent,
 } from "./hook-gateway.types.js";
 import type {
+  PluginHookBeforeChannelIngressContext,
+  PluginHookBeforeChannelIngressEvent,
+  PluginHookBeforeChannelIngressResult,
+  PluginHookBeforeDispatchContext,
+  PluginHookBeforeDispatchEvent,
+  PluginHookBeforeDispatchResult,
+} from "./hook-ingress.types.js";
+import type {
   PluginHookInboundClaimContext,
   PluginHookInboundClaimEvent,
   PluginHookMessageContext,
@@ -50,6 +58,15 @@ import type {
 } from "./host-hook-turn-types.js";
 import type { SkillInstallSpecMetadata } from "./install-security-scan.types.js";
 import type { PluginHookSessionContext } from "./session-end-transcript.js";
+
+export type {
+  PluginHookBeforeChannelIngressContext,
+  PluginHookBeforeChannelIngressEvent,
+  PluginHookBeforeChannelIngressResult,
+  PluginHookBeforeDispatchContext,
+  PluginHookBeforeDispatchEvent,
+  PluginHookBeforeDispatchResult,
+} from "./hook-ingress.types.js";
 
 export type { PluginHookReplyDispatchEvent } from "./hook-reply-dispatch-event.types.js";
 
@@ -381,63 +398,6 @@ type PluginHookAfterCompactionEvent = {
 export type PluginHookInboundClaimResult = {
   handled: boolean;
   reply?: ReplyPayload;
-};
-
-/** Event-owned provider facts before binding/media download; never requester authority. */
-export type PluginHookBeforeChannelIngressEvent = {
-  /** Channel-specific primitive DTO; never the transport's native journal/update object. */
-  readonly providerUpdate: Readonly<Record<string, unknown>>;
-};
-
-export type PluginHookBeforeChannelIngressContext = {
-  readonly channelId: string;
-  readonly accountId: string;
-  readonly abortSignal: AbortSignal;
-  /** Report actual pre-adoption preparation liveness; expires with this handler. */
-  readonly heartbeat: () => void;
-  readonly heartbeatIntervalMs?: number;
-};
-
-export type PluginHookBeforeChannelIngressResult = {
-  /** Prepared inbound text, not an outbound reply or adoption receipt. */
-  text: string;
-  /** Skip native attachment loading when the text already replaces those attachments. */
-  suppressAttachments?: boolean;
-};
-
-export type PluginHookBeforeDispatchEvent = {
-  messageId?: string;
-  content: string;
-  body?: string;
-  channel?: string;
-  sessionKey?: string;
-  senderId?: string;
-  replyToId?: string;
-  replyToIdFull?: string;
-  replyToBody?: string;
-  replyToSender?: string;
-  replyToIsQuote?: boolean;
-  isGroup?: boolean;
-  timestamp?: number;
-};
-
-export type PluginHookBeforeDispatchContext = {
-  messageId?: string;
-  channelId?: string;
-  accountId?: string;
-  conversationId?: string;
-  sessionKey?: string;
-  senderId?: string;
-  replyToId?: string;
-  replyToIdFull?: string;
-  replyToBody?: string;
-  replyToSender?: string;
-  replyToIsQuote?: boolean;
-};
-
-export type PluginHookBeforeDispatchResult = {
-  handled: boolean;
-  text?: string;
 };
 
 export type PluginHookReplyDispatchContext = {

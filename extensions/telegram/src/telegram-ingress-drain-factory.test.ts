@@ -4,8 +4,11 @@ import type {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { recordTelegramMessageProcessingResult } from "./bot-processing-outcome.js";
+import { TelegramMessageDispatchReplayForgetError } from "./message-dispatch-dedupe.js";
 import { createTelegramTransportIngressMonitor } from "./telegram-ingress-drain-factory.js";
 import type { createTelegramIngressMonitor } from "./telegram-ingress-drain.js";
+import { prepareTelegramAuthorizedIngress } from "./telegram-ingress-preparation.js";
 
 type Dispatch = Parameters<typeof createTelegramIngressMonitor>[0]["dispatch"];
 const mocks = vi.hoisted(() => ({
@@ -17,15 +20,21 @@ const mocks = vi.hoisted(() => ({
       ) => Promise<PluginHookBeforeChannelIngressResult | undefined>
     >(),
 }));
+// mock-isolation: Factory-only projection/lifecycle tests must not open the durable spool; SQLite admission is covered by the integration sibling.
 vi.mock("./telegram-ingress-spool.js", () => ({ openTelegramIngressQueue: () => ({}) }));
+// mock-isolation: Capture factory callbacks without starting a durable ingress pump or its timers in this unit fixture.
 vi.mock("./telegram-ingress-drain.js", () => ({
   createTelegramIngressMonitor: mocks.monitor,
   resolveTelegramAdoptionStallTimeoutMs: () => 300_000,
 }));
-vi.mock("openclaw/plugin-sdk/plugin-hook-runtime", () => ({
+vi.mock("openclaw/plugin-sdk/plugin-hook-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/plugin-hook-runtime")>()),
   getGlobalHookRunner: () => ({ hasHooks: () => true, runBeforeChannelIngress: mocks.prepare }),
 }));
-vi.mock("openclaw/plugin-sdk/runtime-config-snapshot", () => ({ readRuntimeConfig: () => ({}) }));
+vi.mock("openclaw/plugin-sdk/runtime-config-snapshot", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/runtime-config-snapshot")>()),
+  readRuntimeConfig: () => ({}),
+}));
 
 function fixture() {
   const controller = new AbortController();
@@ -52,10 +61,21 @@ function fixture() {
       caption: "caption",
     },
   };
-  const bot = { handleUpdate: vi.fn(async () => {}), api: { answerCallbackQuery: vi.fn() } };
+  const downstream = vi.fn();
+  // This unit fixture owns factory projection/lifecycle only. The SQLite sibling
+  // exercises the real native admission gate before consuming this bridge.
+  const bot = {
+    handleUpdate: vi.fn(async (update: object) => {
+      await prepareTelegramAuthorizedIngress(update);
+      downstream(update);
+    }),
+    api: { answerCallbackQuery: vi.fn() },
+  };
   createTelegramTransportIngressMonitor({ bot, accountId: "account-a" });
-  const dispatch: Dispatch = mocks.monitor.mock.calls[0][0].dispatch;
-  return { update, bot, dispatch, lifecycle, controller };
+  const invocation = mocks.monitor.mock.calls[0];
+  if (!invocation) throw new Error("expected durable ingress monitor registration");
+  const dispatch: Dispatch = invocation[0].dispatch;
+  return { update, bot, dispatch, lifecycle, controller, downstream };
 }
 
 describe("Telegram native ingress preparation", () => {
@@ -64,13 +84,14 @@ describe("Telegram native ingress preparation", () => {
     mocks.prepare.mockReset();
   });
 
-  it("awaits preparation before invoking middleware that downloads media", async () => {
+  it("awaits preparation inside middleware before downstream media processing", async () => {
     const preparation = createDeferred<PluginHookBeforeChannelIngressResult>();
     mocks.prepare.mockReturnValue(preparation.promise);
     const f = fixture();
     const originalMessage = f.update.message;
     const dispatched = f.dispatch(f.update, f.lifecycle);
-    expect(f.bot.handleUpdate).not.toHaveBeenCalled();
+    expect(f.bot.handleUpdate).toHaveBeenCalledOnce();
+    expect(f.downstream).not.toHaveBeenCalled();
     expect(f.lifecycle.onAdopted).not.toHaveBeenCalled();
     expect(f.lifecycle.onAdoptionFinalizing).not.toHaveBeenCalled();
     preparation.resolve({ text: "Accept the required terms first.", suppressAttachments: true });
@@ -198,7 +219,8 @@ describe("Telegram native ingress preparation", () => {
     await expect(dispatched).rejects.toThrow("owner cancelled");
     expect(f.lifecycle.onCancelled).toHaveBeenCalledOnce();
     expect(f.lifecycle.onAdopted).not.toHaveBeenCalled();
-    expect(f.bot.handleUpdate).not.toHaveBeenCalled();
+    expect(f.bot.handleUpdate).toHaveBeenCalledOnce();
+    expect(f.downstream).not.toHaveBeenCalled();
     expect(f.update.message).toHaveProperty("voice");
   });
 
@@ -207,7 +229,47 @@ describe("Telegram native ingress preparation", () => {
     const f = fixture();
     await expect(f.dispatch(f.update, f.lifecycle)).rejects.toThrow("transcript pending");
     expect(f.lifecycle.onCancelled).not.toHaveBeenCalled();
-    expect(f.bot.handleUpdate).not.toHaveBeenCalled();
+    expect(f.bot.handleUpdate).toHaveBeenCalledOnce();
+    expect(f.downstream).not.toHaveBeenCalled();
     expect(f.lifecycle.onAdopted).not.toHaveBeenCalled();
   });
+
+  it("does not prepare when native middleware declines to consume the update", async () => {
+    const f = fixture();
+    f.bot.handleUpdate.mockImplementation(async () => {});
+    await f.dispatch(f.update, f.lifecycle);
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(await prepareTelegramAuthorizedIngress(f.update)).toBe(false);
+  });
+
+  it.each(["throw", "record"] as const)(
+    "retains a native rollback failure instead of reopening an aborted preparation (%s)",
+    async (mode) => {
+      const f = fixture();
+      const failure = new TelegramMessageDispatchReplayForgetError([]);
+      mocks.prepare.mockImplementation(async () => {
+        f.controller.abort(new Error("owner cancelled"));
+        throw f.controller.signal.reason;
+      });
+      f.bot.handleUpdate.mockImplementation(async (update: object) => {
+        try {
+          await prepareTelegramAuthorizedIngress(update);
+        } catch {
+          if (mode === "throw") throw failure;
+          recordTelegramMessageProcessingResult({ kind: "failed-retryable", error: failure });
+        }
+      });
+      if (mode === "throw") {
+        await expect(f.dispatch(f.update, f.lifecycle)).rejects.toBe(failure);
+      } else {
+        await expect(f.dispatch(f.update, f.lifecycle)).resolves.toEqual({
+          kind: "failed-retryable",
+          error: failure,
+        });
+      }
+      expect(f.lifecycle.onCancelled).not.toHaveBeenCalled();
+      expect(f.lifecycle.onAdopted).not.toHaveBeenCalled();
+      expect(f.downstream).not.toHaveBeenCalled();
+    },
+  );
 });

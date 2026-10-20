@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { Api } from "grammy";
 import { expect, it } from "vitest";
 import {
+  asTelegramClientFetch,
   createTelegramClientFetch,
   getOrCreateAccountThrottler,
   resolveTelegramTransport,
@@ -37,11 +38,13 @@ it("composes the public native transport/client/throttler with actual grammY get
     expect(getOrCreateAccountThrottler(token)).toBe(limiter);
     const api = new Api(token, {
       apiRoot: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-      fetch: createTelegramClientFetch({
-        fetchImpl: transport.fetch,
-        shutdownSignal: shutdown.signal,
-        transport,
-      }),
+      fetch: asTelegramClientFetch(
+        createTelegramClientFetch({
+          fetchImpl: asTelegramClientFetch(transport.fetch),
+          shutdownSignal: shutdown.signal,
+          transport,
+        }),
+      ),
     });
     api.config.use(limiter.transformer);
     expect((await api.getFile("own")).file_path).toBe("voice.ogg");
