@@ -88,16 +88,14 @@ describe("buildAgentHookContextIdentityFields", () => {
 });
 
 describe("buildAgentHookContextCronFields", () => {
-  it("uses the executing snapshot rather than a job edited while the run is active", () => {
-    const job = { id: "daily-check", configRevision: "revision-start" };
+  it("projects the registered snapshot only while the run is active", () => {
     const unregister = registerCronRunExecSource("cron-hook-run", {
       agentId: "main",
-      jobId: job.id,
-      jobConfigRevision: job.configRevision,
+      jobId: "daily-check",
+      jobConfigRevision: "revision-start",
       jobName: "Daily check",
     });
     try {
-      job.configRevision = "revision-edited";
       const context = buildAgentHookContextCronFields({
         runId: "cron-hook-run",
         agentId: "main",
