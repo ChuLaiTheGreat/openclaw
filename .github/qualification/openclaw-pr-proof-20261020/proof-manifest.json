@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "phase": "package178124",
+  "phase": "sdk171315",
   "repository": "ChuLaiTheGreat/openclaw",
   "branch": "qualification/openclaw-pr-capacity-20261020",
   "toolingSha": "5a0b5006d5fcb72f238c3c587395bf38591971ad",
@@ -16,8 +16,8 @@
     },
     "sdk171315": {
       "pr": 171315,
-      "head": "REPLACE_WITH_REVIEWED_PUBLISHED_HEAD",
-      "tree": "dab194265054fe800c9f53d5f7706f006974c11b"
+      "head": "3c2d5ee969e551bd7bd9fe122406d6db750e1ceb",
+      "tree": "556950122f55805a6cf14c2cd53d38263d50a00e"
     }
   }
 }

@@ -22,6 +22,7 @@ def execute(manifest,candidate,source,proof,image,tools,store,helpers):
       ('sdk-extension-lint',['node','scripts/run-oxlint.mjs','--tsconfig','extensions/tsconfig.json',*lint]),
       ('sdk-core-types',['node','scripts/run-tsgo.mjs','-p','tsconfig.core.json','--incremental','--tsBuildInfoFile','.artifacts/tsgo-cache/core.tsbuildinfo']),
       ('sdk-native-boundary',['node','--import','./scripts/tsx.mjs','scripts/check-extension-package-tsc-boundary.mts','--mode=compile']),
+      ('sdk-database-worker-ratchet',['pnpm','check:database-worker-ratchet','--base',base,'--no-merge-base']),
     ]
     rows=[]
     build_ok=False
