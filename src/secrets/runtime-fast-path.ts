@@ -168,7 +168,6 @@ export function prepareSecretsRuntimeFastPathSnapshot(params: {
 }): {
   snapshot: PreparedSecretsRuntimeSnapshot;
   refreshContext: SecretsRuntimeRefreshContext;
-  usesAuthStoreFallback: boolean;
 } | null {
   const runtimeEnv = mergeSecretsRuntimeEnv(params.env);
   const authStoreCredentialsRevision = getRuntimeAuthProfileStoreCredentialsRevision();
@@ -197,7 +196,7 @@ export function prepareSecretsRuntimeFastPathSnapshot(params: {
       }
       // Empty startup snapshots carry the admitted absence into later session-only creation.
       for (const pathname of databasePaths) {
-        recordRuntimeAuthProfilePersistedStore(pathname, null, runtimeEnv);
+        recordRuntimeAuthProfilePersistedStore(pathname, null);
       }
       authStores = candidateDirs.map((agentDir) => ({
         agentDir,
@@ -229,7 +228,6 @@ export function prepareSecretsRuntimeFastPathSnapshot(params: {
   };
   return {
     snapshot,
-    usesAuthStoreFallback: !params.loadAuthStore,
     refreshContext: {
       env: runtimeEnv,
       explicitAgentDirs: params.agentDirs?.length ? [...candidateDirs] : null,

@@ -9,6 +9,10 @@ import {
   type OpenClawConfig,
 } from "../config/config.js";
 import {
+  getOwnedSessionTranscriptWriterFence,
+  withOwnedSessionTranscriptWrites,
+} from "../config/sessions/transcript-write-context.js";
+import {
   areDiagnosticsEnabledForProcess,
   getInternalDiagnosticEventSequence,
   onInternalDiagnosticEvent,
@@ -19,10 +23,10 @@ import {
   withPluginRuntimePluginScope,
 } from "../plugins/runtime/gateway-request-scope.js";
 import type { PluginRuntime } from "../plugins/runtime/types.js";
-import { createBackgroundWorkOwner } from "../process/background-work.js";
 import * as commandQueue from "../process/command-queue.js";
 import { resetCommandQueueStateForTest } from "../process/command-queue.test-support.js";
 import { CommandLane } from "../process/lanes.js";
+import { trackAsyncWork } from "../shared/async-work-scope.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
@@ -126,16 +130,53 @@ afterEach(() => {
 });
 
 describe("plugin background completions", () => {
+  it("isolates completion from its caller transcript writer", async () => {
+    isolated.mockImplementationOnce(async (params) => {
+      expect(getOwnedSessionTranscriptWriterFence()).toBeUndefined();
+      return {
+        text: "Independent completion",
+        provider: params.provider,
+        model: params.model,
+        owner: { kind: "harness", id: "test-runtime" },
+      };
+    });
+    await withOwnedSessionTranscriptWrites(
+      {
+        sessionTarget: {
+          agentId: "main",
+          sessionId: "parent-session",
+          sessionKey: "agent:main:parent",
+          storePath: "/tmp/transcript-writer-parent.sqlite",
+          expectedWriterRunId: "parent-run",
+        },
+        withTranscriptWrite: trackAsyncWork,
+      },
+      async () => {
+        await expect(complete(createRuntime())).resolves.toEqual({
+          text: "Independent completion",
+        });
+        expect(getOwnedSessionTranscriptWriterFence()).toMatchObject({
+          expectedWriterRunId: "parent-run",
+        });
+      },
+    );
+  });
+
   it("queues plugin completions behind the configured subagent cap", async () => {
     commandQueue.setCommandLaneConcurrency(CommandLane.Subagent, 1);
     const slot = createDeferred();
     const active = commandQueue.enqueueCommandInLane(CommandLane.Subagent, () => slot.promise);
-    const background = createBackgroundWorkOwner({
-      owner: "core:completion-test",
-      maxConcurrent: 3,
+    const background = "background:core:completion-test";
+    commandQueue.publishLaneConfiguration({
+      lanes: { [background]: 3 },
+      groups: { "background-work": { budget: 3, members: [background] } },
     });
     const backgroundWork = Promise.all(
-      Array.from({ length: 3 }, () => background.enqueue(() => slot.promise)),
+      Array.from({ length: 3 }, () =>
+        commandQueue.enqueueCommandInLane(background, () => slot.promise, {
+          priority: "background",
+        }),
+      ),
     );
     const enqueued = createDeferred();
     const diagnosticsEnabled = areDiagnosticsEnabledForProcess();

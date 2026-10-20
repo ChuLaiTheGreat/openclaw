@@ -1,4 +1,3 @@
-import { createRetainedOperation } from "@openclaw/worker-runtime/lifecycle";
 import {
   ensureSqliteLibrarySelected,
   getSqliteRuntimeCapabilities,
@@ -37,10 +36,14 @@ export function createStateReadPool(
       workerOptions: { resourceLimits: { maxOldGenerationSizeMb: 512 } },
       maxWorkers: resolveStateReadWorkerCount(),
       idleTimeoutMs: SQLITE_IDLE_HANDLE_TTL_MS,
+      // Keep one reader warm; release surplus isolates after a short idle period.
+      burstIdleTimeoutMs: 30_000,
       maxPendingTasks: DEFAULT_WORKER_PENDING_TASKS,
       maxPendingBytes: DEFAULT_WORKER_PENDING_BYTES,
     },
-    nativeSource ? { retainedTransport: true, nativeSource } : undefined,
+    nativeSource
+      ? { retainedTransport: true, nativeSource, databaseAccess: "read-only" }
+      : { databaseAccess: "read-only" },
   );
   if (process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development") {
     const closeResources = pool.closeResources;
@@ -61,26 +64,4 @@ export function closeReadResources(pool: ReadPool, key?: string) {
   return getSqliteRuntimeCapabilities().explicitSqliteCloseReleasesNativeResources
     ? pool.closeResources(key)
     : pool.rotate();
-}
-
-/** The same task/close contract; promise-only callers do not synchronously service it. */
-export function startReadTask(
-  selection: { pool: ReadPool; retained: boolean },
-  input: Parameters<ReadPool["startTask"]>[0],
-  options: Parameters<ReadPool["startTask"]>[1],
-): ReturnType<ReadPool["startTask"]> {
-  if (selection.retained) {
-    return selection.pool.startTask(input, options);
-  }
-  const task = selection.pool.runTask(input, options);
-  const result = createRetainedOperation<OpenClawStateReadReply>(() => {});
-  void task.result.then(result.resolve, result.reject);
-  return {
-    ...result.operation,
-    release(closeOptions) {
-      const closed = createRetainedOperation<void>(() => {});
-      void task.close(closeOptions).then(closed.resolve, closed.reject);
-      return closed.operation;
-    },
-  };
 }
