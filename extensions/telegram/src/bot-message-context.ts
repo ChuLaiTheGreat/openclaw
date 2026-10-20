@@ -10,6 +10,7 @@ import type {
   TelegramDirectConfig,
   TelegramGroupConfig,
 } from "openclaw/plugin-sdk/config-contracts";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { deriveLastRoutePolicy, normalizeAccountId } from "openclaw/plugin-sdk/routing";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
@@ -468,7 +469,7 @@ export const buildTelegramMessageContext = async ({
   let allowedStatusReactionEmojisPromise: Promise<Set<TelegramReactionEmoji> | null> | null = null;
   // The fresh controller's first queued reaction owns this acknowledgment;
   // scheduling it is not evidence that Telegram accepted a reaction.
-  const statusAcknowledgment = Promise.withResolvers<boolean>();
+  const statusAcknowledgment = createDeferred<boolean>();
   const statusReactionController: TelegramStatusReactionController | null =
     statusReactionsEnabled && resolvedStatusReactionEmojis && msg.message_id
       ? (
