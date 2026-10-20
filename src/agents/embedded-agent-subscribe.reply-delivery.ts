@@ -12,6 +12,7 @@ import {
   type AgentAssistantSourceReceipt,
 } from "../infra/agent-events.js";
 import { normalizeTextForComparison } from "./embedded-agent-helpers/messaging-dedupe.js";
+import { withAssistantReplySource } from "./embedded-agent-reply-source.js";
 import type { BlockReplyPayload } from "./embedded-agent-payloads.js";
 import { runBestEffortCallback } from "./embedded-agent-subscribe.callback.js";
 import {
@@ -466,14 +467,16 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
         assistantTranscriptSource: readAgentAssistantSource(state.lastAssistant),
       });
     }
+    const sourcePayload = withAssistantReplySource(blockPayload, state.assistantReplyToId);
+    copyReplyPayloadMetadata(blockPayload, sourcePayload);
     const taggedPayload =
       options?.assistantMessageIndex !== undefined
-        ? setReplyPayloadMetadata(blockPayload, {
+        ? setReplyPayloadMetadata(sourcePayload, {
             assistantMessageIndex: options.assistantMessageIndex,
             assistantMessageStartIndex: state.assistantMessageStartIndex,
             ...(assistantTranscriptMediaUrls.length > 0 ? { assistantTranscriptMediaUrls } : {}),
           })
-        : blockPayload;
+        : sourcePayload;
     if (blockPayload.text && options?.blockSourceText !== undefined) {
       setReplyPayloadMetadata(taggedPayload, {
         blockSourceText: options.blockSourceText,

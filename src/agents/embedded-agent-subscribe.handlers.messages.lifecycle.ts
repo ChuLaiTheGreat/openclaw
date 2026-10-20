@@ -42,6 +42,7 @@ import type { AgentEvent, AgentMessage } from "./runtime/index.js";
 export function handleMessageStart(
   ctx: EmbeddedAgentSubscribeContext,
   evt: AgentEvent & { message: AgentMessage },
+  sourceMessageId?: string,
 ) {
   const msg = evt.message;
   if (msg?.role !== "assistant" || isSubscribeTranscriptOnlyOpenClawAssistantMessage(msg)) {
@@ -53,6 +54,7 @@ export function handleMessageStart(
   // Only message_start opens another message's stream and block replies.
   ctx.resetAssistantMessageState(ctx.state.assistantTexts.length);
   ctx.state.assistantMessageStartIndex = ctx.state.assistantMessageIndex;
+  ctx.state.assistantReplyToId = sourceMessageId;
   // Use assistant message_start as the earliest "writing" signal for typing.
   emitAssistantMessageStart(ctx);
 }
@@ -90,6 +92,12 @@ export function handleMessageEnd(
   // the completed model round trips consumers see as `assistantTurns`.
   ctx.state.assistantTurnCount += 1;
   const assistantMessage = msg;
+  if (ctx.state.assistantReplyToId) {
+    assistantMessage.openclawDelivery = {
+      ...assistantMessage.openclawDelivery,
+      sourceMessageId: ctx.state.assistantReplyToId,
+    };
+  }
   const assistantPhase = resolveAssistantMessagePhase(assistantMessage);
   const suppressVisibleAssistantOutput = assistantPhase === "commentary";
   const suppressDeterministicApprovalOutput = shouldSuppressDeterministicApprovalOutput(ctx.state);

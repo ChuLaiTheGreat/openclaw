@@ -1,3 +1,4 @@
+import { resolveAssistantReplySource } from "./embedded-agent-reply-source.js";
 /**
  * Dispatches serialized embedded-agent subscription events to specific handlers.
  */
@@ -95,9 +96,15 @@ export function createEmbeddedAgentSessionEventHandler(ctx: EmbeddedAgentSubscri
       evt.type === "tool_execution_end" ? prepareToolResult(evt.result) : undefined;
     recordEmbeddedToolTrajectoryEvent(ctx, evt, readResult);
     switch (evt.type) {
-      case "message_start":
-        void scheduleEvent(evt, () => handleMessageStart(ctx, evt));
+      case "message_start": {
+        // Delivery can delay lifecycle handlers; snapshot at the native event boundary.
+        const sourceMessageId = resolveAssistantReplySource(
+          ctx.params.getUserTranscriptContexts?.(),
+          ctx.params.messageChannel,
+        );
+        void scheduleEvent(evt, () => handleMessageStart(ctx, evt, sourceMessageId));
         return;
+      }
       case "message_update":
         void scheduleEvent(evt, () => handleMessageUpdate(ctx, evt));
         return;
