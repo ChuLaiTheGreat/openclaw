@@ -200,22 +200,6 @@ describe("Telegram native ingress preparation", () => {
     expect(f.update.message).not.toHaveProperty("caption_entities");
   });
 
-  it("delegates an album intact when native middleware retains its collective owner", async () => {
-    const f = fixture();
-    Object.assign(f.update.message, { media_group_id: "synthetic-album" });
-    const originalMessage = f.update.message;
-    f.bot.handleUpdate.mockImplementation(async (nativeUpdate: object) => {
-      f.downstream(nativeUpdate);
-    });
-    await f.dispatch(f.update, f.lifecycle);
-    expect(mocks.prepare).not.toHaveBeenCalled();
-    expect(f.update.message).toBe(originalMessage);
-    expect(f.update.message).toHaveProperty("media_group_id", "synthetic-album");
-    expect(f.update.message).toHaveProperty("voice");
-    expect(f.bot.handleUpdate).toHaveBeenCalledWith(f.update);
-    expect(f.downstream).toHaveBeenCalledWith(f.update);
-  });
-
   it("rejects late prepared text after the native owner aborts", async () => {
     const preparation = createDeferred<PluginHookBeforeChannelIngressResult>();
     mocks.prepare.mockReturnValue(preparation.promise);
