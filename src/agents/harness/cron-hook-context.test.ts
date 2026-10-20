@@ -3,7 +3,7 @@ import { registerCronRunExecSource } from "../../infra/cron-run-exec-source.js";
 import { buildEmbeddedAgentHookContext } from "../embedded-agent-runner/run/agent-hook-context.js";
 import { buildAgentHookContext } from "./hook-context.js";
 
-// These runs have no memory audience; persistence is unrelated to cron context.
+// mock-isolation: These runs have no memory audience; persistence is unrelated to cron context.
 vi.mock("../../plugins/memory-audience.js", () => ({
   assertMemoryAudienceCurrent: vi.fn(),
   assertMemoryAudienceSession: vi.fn(),
