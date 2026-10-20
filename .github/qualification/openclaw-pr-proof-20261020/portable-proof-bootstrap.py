@@ -194,6 +194,11 @@ def main():
         receipts += [package_proof/name for name in ['image-verification.json','isolation-verification.json','plan.json','package.sha256','registry-result.json','package-artifact.json','registry-validation.json','package.log','registry.log','sqlite-volume.log']]
         for name in ['summary.json','volume-gateway.json','volume-gateway-restarted.json','volume-doctor-budget.json','phases.jsonl']:
             receipts.append(package_proof/'sqlite-volume'/name)
+        # Only the trusted publisher's public projection, never sqlite-volume/diagnostics/raw.json.
+        diagnostic_root=package_proof/'native-published-diagnostics'
+        if diagnostic_root.is_dir() and not diagnostic_root.is_symlink() and diagnostic_root.resolve().is_relative_to(package_proof.resolve()):
+            for name in ['failure.json','summary.json']:
+                receipts += sorted(diagnostic_root.glob('upgrade-survivor-*/'+name))[:4]
         for item in receipts:
             if item.is_file() and not item.is_symlink() and item.resolve().is_relative_to(package_proof.resolve()):
                 print('PACKAGE_EVIDENCE',item.relative_to(package_proof),flush=True)

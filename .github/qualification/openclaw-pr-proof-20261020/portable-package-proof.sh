@@ -225,7 +225,10 @@ plan() {
 const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
 if(p.lanes.length!==1 || p.lanes[0].stateScenario!=="upgrade-survivor" || !p.lanes[0].name.includes("sqlite-volume") ||
    !p.needs.package || !p.needs.bareImage || !p.needs.prepublishPluginRegistry || p.credentials.length ||
-   !p.requiredPrepublishPluginPackages.includes("@openclaw/codex")) throw Error("Unexpected proof plan");
+   !p.requiredPrepublishPluginPackages.includes("@openclaw/codex") ||
+   !p.lanes[0].command.includes("OPENCLAW_UPGRADE_SURVIVOR_COMMAND_TIMEOUT=1500s") ||
+   !p.lanes[0].command.includes("OPENCLAW_UPGRADE_SURVIVOR_DOCKER_RUN_TIMEOUT:-2280s") ||
+   p.lanes[0].timeoutMs!==2580000) throw Error("Unexpected proof plan");
 ' "$PROOF/plan.json"
 }
 
@@ -282,6 +285,8 @@ fs.writeFileSync(proof+"/registry-validation.json",JSON.stringify({sourceSha:val
 NODE
 }
 
+# Match the selected published lane in trusted5a scripts/lib/docker-e2e-scenarios.mts.
+# Direct script defaults (900s/1200s) are not that lane's committed contract.
 survivor() {
   assert_package_artifact
   sha256sum --check "$PROOF/package.sha256"
@@ -294,6 +299,8 @@ survivor() {
     OPENCLAW_UPGRADE_SURVIVOR_CANDIDATE=current OPENCLAW_UPGRADE_SURVIVOR_SCENARIO=sqlite-volume \
     OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR="$PROOF/sqlite-volume" \
     OPENCLAW_UPGRADE_SURVIVOR_UPDATE_RESTART_MODE=manual OPENCLAW_UPGRADE_SURVIVOR_ROOT_MANAGED_VPS=0 \
+    OPENCLAW_UPGRADE_SURVIVOR_COMMAND_TIMEOUT=1500s OPENCLAW_UPGRADE_SURVIVOR_DOCKER_RUN_TIMEOUT=2280s \
+    OPENCLAW_DOCKER_ALL_LOG_DIR="$PROOF/native-published-diagnostics" \
     OPENCLAW_UPGRADE_SURVIVOR_LIVE_MODELS= OPENCLAW_UPGRADE_SURVIVOR_LIVE_OPENAI=0 \
     OPENCLAW_UPGRADE_SURVIVOR_E2E_IMAGE="$IMAGE_ID" OPENCLAW_UPGRADE_SURVIVOR_E2E_SKIP_BUILD=1 \
     OPENCLAW_DOCKER_E2E_REQUIRE_LOCAL_IMAGE=1 OPENCLAW_DOCKER_E2E_MEMORY=12g \
