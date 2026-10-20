@@ -167,9 +167,10 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
               params.replyOptions?.allowToolLifecycleWhenProgressHidden === true,
           };
           const replyOptions = state.getReplyOptions();
-          const onReplyPreparation = params.replyOptions?.isHeartbeat
-            ? undefined
-            : wrapProgressCallback(params.replyOptions?.onReplyPreparation);
+          const onReplyPreparation =
+            params.replyOptions?.isHeartbeat || state.sendPolicyDenied
+              ? undefined
+              : wrapProgressCallback(params.replyOptions?.onReplyPreparation);
           // Progress belongs to this dispatch, before the resolver loads history or
           // checkpoints memory. It never settles the source's final-reply obligation.
           if (onReplyPreparation) {

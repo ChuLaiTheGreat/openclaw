@@ -25,12 +25,21 @@ it("awaits preparation feedback before the required memory checkpoint", async ()
     await Promise.resolve();
     events.push("preparation notice");
   });
-  await prepareReplyTurnContext({
-    cfg: {}, followupRun: createTestFollowupRun(), defaultModel: "synthetic/model",
-    isHeartbeat: false, replyOperation: createMockReplyOperation(),
-    resolvedVerboseLevel: "off", publishCheckpoint: () => {},
-    opts: { onReplyPreparation },
-  });
-  expect(events).toEqual(["preparation notice", "memory checkpoint"]);
-  expect(onReplyPreparation).toHaveBeenCalledExactlyOnceWith("context");
+  const { replyOperation } = createMockReplyOperation();
+  try {
+    await prepareReplyTurnContext({
+      cfg: {},
+      followupRun: createTestFollowupRun(),
+      defaultModel: "synthetic/model",
+      isHeartbeat: false,
+      replyOperation,
+      resolvedVerboseLevel: "off",
+      publishCheckpoint: () => {},
+      opts: { onReplyPreparation },
+    });
+    expect(events).toEqual(["preparation notice", "memory checkpoint"]);
+    expect(onReplyPreparation).toHaveBeenCalledExactlyOnceWith("context");
+  } finally {
+    replyOperation.complete();
+  }
 });

@@ -63,14 +63,21 @@ describe("dispatchReplyFromConfig", () => {
     setNoAbort();
     const controller = new AbortController();
     const replyResolver = vi.fn(async () => ({ text: "Must not run" }));
-    await expect(dispatchReplyFromConfig({
-      ctx: createDirectCtx(), cfg: emptyConfig, dispatcher: createDispatcher(),
-      replyOptions: {
-        abortSignal: controller.signal,
-        onReplyPreparation: async () => { controller.abort(); return true; },
-      },
-      replyResolver,
-    })).resolves.toBeDefined();
+    await expect(
+      dispatchReplyFromConfig({
+        ctx: createDirectCtx(),
+        cfg: emptyConfig,
+        dispatcher: createDispatcher(),
+        replyOptions: {
+          abortSignal: controller.signal,
+          onReplyPreparation: async () => {
+            controller.abort();
+            return true;
+          },
+        },
+        replyResolver,
+      }),
+    ).resolves.toBeDefined();
     expect(replyResolver).not.toHaveBeenCalled();
   });
 
@@ -78,19 +85,24 @@ describe("dispatchReplyFromConfig", () => {
     for (const denied of [true, false]) {
       setNoAbort();
       sessionStoreMocks.currentEntry = {
-        sessionId: "session", updatedAt: 0, sendPolicy: denied ? "deny" : "allow",
+        sessionId: "session",
+        updatedAt: 0,
+        sendPolicy: denied ? "deny" : "allow",
       };
-      const onReplyPreparation = vi.fn(async () => { throw new Error("feedback unavailable"); });
+      const onReplyPreparation = vi.fn(async () => {
+        throw new Error("feedback unavailable");
+      });
       const replyResolver = vi.fn(async () => ({ text: "Done" }));
-      await dispatchReplyFromConfig({
+      const result = await dispatchReplyFromConfig({
         ctx: createDirectCtx({ SessionKey: `preparation:${denied}` }),
         cfg: emptyConfig,
         dispatcher: createDispatcher(),
         replyOptions: { onReplyPreparation },
         replyResolver,
       });
+      expect(result.sendPolicyDenied).toBe(denied ? true : undefined);
       expect(onReplyPreparation).toHaveBeenCalledTimes(denied ? 0 : 1);
-      if (!denied) expect(replyResolver).toHaveBeenCalledOnce();
+      expect(replyResolver).toHaveBeenCalledOnce();
     }
   });
 

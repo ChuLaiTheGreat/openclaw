@@ -4,6 +4,7 @@ import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-even
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { ReplyOperation } from "../../sessions/session-controller.js";
 import { readPendingUserTurnTranscriptAdmission } from "../../sessions/user-turn-transcript-admission.js";
+import type { GetReplyOptions } from "../types.js";
 import { buildPreflightCompactionFailureText } from "./agent-runner-failure-reply.js";
 import { runMemoryFlushIfNeeded, runSessionCompactionIfNeeded } from "./agent-runner-memory.js";
 
@@ -18,7 +19,8 @@ type ReplyTurnPreflightParams = Omit<
   | "onCompactionStart"
   | "onSessionIdChanged"
 > &
-  Pick<MemoryFlushParams, "opts" | "resolvedVerboseLevel"> & {
+  Pick<MemoryFlushParams, "resolvedVerboseLevel"> & {
+    opts?: MemoryFlushParams["opts"] & Pick<GetReplyOptions, "onReplyPreparation">;
     replyOperation: ReplyOperation;
     publishCheckpoint: (entry: SessionEntry | undefined) => void;
     trace?: <T>(phase: string, run: () => Promise<T>) => Promise<T>;
