@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  collectNestedErrorCandidates,
+  extractErrorCode,
+} from "@openclaw/normalization-core/error-coercion";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { awaitGateBeforeSettlement, createDeferred } from "../../../test/helpers/promise.js";
 import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
@@ -27,6 +31,7 @@ import {
   loadSessionEntry,
   onSessionIdentityMutation,
   patchSessionEntryCore,
+  createSessionEntryWithTranscript,
 } from "./session-accessor.js";
 import {
   patchSessionEntryTarget,
@@ -39,6 +44,7 @@ import {
   runExclusiveSqliteSessionWrite,
   toDatabaseOptions,
 } from "./session-accessor.sqlite-scope.js";
+import { memorySessionActorOwners } from "./session-actor-memory-owner.js";
 
 const roots = createTempDirTracker();
 const worker = vi.hoisted(() => ({
@@ -82,6 +88,7 @@ afterEach(async () => {
   }
   await closeOpenClawAgentDatabasesAsync();
   await closeOpenClawStateDatabaseAsync();
+  memorySessionActorOwners.reset();
   if (worker.gate) {
     expect([...worker.gate.workers].every((observed) => observed.threadId === -1)).toBe(true);
     worker.gate = undefined;
@@ -108,6 +115,18 @@ function fixture(sessionKey = "agent:main:admission") {
   replaceSessionEntrySync(scope, { sessionId: "original", updatedAt: 1 });
   const database = openOpenClawAgentDatabase(toDatabaseOptions(resolveSqliteScope(scope)));
   return { root, env, scope, database, databasePath: database.path };
+}
+
+async function memoryFixture() {
+  const root = roots.make("session-memory-patch-admission-");
+  const env = { OPENCLAW_STATE_DIR: root };
+  vi.stubEnv("OPENCLAW_STATE_DIR", root);
+  const scope = { agentId: "main", env, sessionKey: "agent:main:dashboard:incognito-admission" };
+  await createSessionEntryWithTranscript(scope, () => ({
+    ok: true,
+    entry: { sessionId: "original", updatedAt: 1, incognito: true },
+  }));
+  return { root, env, scope };
 }
 
 function evictHandle(databasePath: string) {
@@ -237,9 +256,7 @@ it.each([
 it.each(["worker", "legacy callback", "incognito"] as const)(
   "admits %s updater invocation through its owner",
   async (mode) => {
-    const f = fixture(
-      mode === "incognito" ? "agent:main:dashboard:incognito-admission" : undefined,
-    );
+    const f = mode === "incognito" ? await memoryFixture() : fixture();
     const native = vi.spyOn(integrity, "assertSqliteIntegrityInWorker");
     let called = false;
     const operation = own(
@@ -454,7 +471,18 @@ it.each(["dispose", "physical replacement"] as const)(
         fs.renameSync(replacementPath, f.databasePath);
       }
       gate.release.resolve();
-      await expect(operation).rejects.toThrow(/closed|revoked|replaced|changed/);
+      // Native retirement can wrap the typed admission refusal before returning its result.
+      await expect(operation).rejects.toSatisfy(
+        (error: unknown) =>
+          error instanceof Error &&
+          (/closed|revoked|replaced|changed/.test(error.message) ||
+            collectNestedErrorCandidates(error).some(
+              (cause) =>
+                cause instanceof Error &&
+                cause.name === "SqliteWorkerError" &&
+                extractErrorCode(cause) === "closed",
+            )),
+      );
       expect(update).not.toHaveBeenCalled();
       expect(committed).not.toHaveBeenCalled();
       expect(loadSessionEntry(f.scope)).not.toHaveProperty("label");
