@@ -167,6 +167,16 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
               params.replyOptions?.allowToolLifecycleWhenProgressHidden === true,
           };
           const replyOptions = state.getReplyOptions();
+          const onReplyPreparation = params.replyOptions?.isHeartbeat
+            ? undefined
+            : wrapProgressCallback(params.replyOptions?.onReplyPreparation);
+          // Progress belongs to this dispatch, before the resolver loads history or
+          // checkpoints memory. It never settles the source's final-reply obligation.
+          try {
+            await onReplyPreparation?.("accepted");
+          } catch (error) {
+            logVerbose(`reply preparation feedback failed: ${formatErrorMessage(error)}`);
+          }
           const result = await replyResolver(
             ctx,
             {
@@ -190,6 +200,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                   trackDispatchLifecycleWork(explicitFollowupStartNotice, "delivery");
                 }
               }),
+              onReplyPreparation,
               preparedTtsPreferences: state.preparedTtsPreferences,
               [REPLY_OPERATION_RUN_STATE]: state.replyOperationRunState,
               sourceReplyDeliveryMode: state.sourceReplyDeliveryMode,

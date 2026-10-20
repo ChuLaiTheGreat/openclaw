@@ -148,6 +148,45 @@ export function createProgressState(
   };
 }
 
+export async function handleReplyPreparation(
+  turn: Turn,
+  phase: "accepted" | "context",
+): Promise<boolean> {
+  const ctx = turn.context.ctxPayload;
+  if (
+    !canPushProgress(turn) ||
+    turn.streamMode !== "progress" ||
+    !turn.commentaryProgressEnabled ||
+    ctx.InboundEventKind === "room_event" ||
+    ctx.SenderIsBot === true ||
+    ctx.InternalTurnSource !== undefined ||
+    (ctx.InputProvenance && ctx.InputProvenance.kind !== "external_user") ||
+    ctx.CommandSource === "native" ||
+    (ctx.RawBody ?? "").trim().startsWith("/")
+  ) {
+    return false;
+  }
+  const reaction = turn.telegramCfg.ackReaction ?? turn.cfg.messages?.ackReaction;
+  if (
+    phase === "accepted" &&
+    turn.cfg.messages?.ackReactionScope === "all" &&
+    typeof reaction === "string" &&
+    reaction.trim()
+  ) {
+    return false;
+  }
+  // Use the existing preview owner: preparation is edited into the same card,
+  // and cleanup/final delivery retain their normal custody and suppression rules.
+  return await turn.progressCompositor.pushToolProgress(
+    buildTelegramProgressLine(
+      "reply-preparation",
+      "💬",
+      phase === "context" ? "Preparing my reply..." : "Message received",
+    ),
+    { startImmediately: true, flush: true },
+  );
+}
+
 export async function settleFailedFinalDelivery(turn: Turn): Promise<void> {
   if (
     turn.isSuperseded() ||

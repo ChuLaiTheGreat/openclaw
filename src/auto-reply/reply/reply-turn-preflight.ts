@@ -44,6 +44,14 @@ export async function prepareReplyTurnContext(
         // Compaction decides whether work is needed, then replans from the
         // checkpoint result. A queued source must not bypass this memory write.
         beforeCompaction: async (entry) => {
+          // Memory checkpointing can itself call a model. Tell the source before
+          // that wait, rather than waiting for the later compactor-start callback.
+          try {
+            await preparation.opts?.onReplyPreparation?.("context");
+          } catch (error) {
+            logVerbose(`reply preparation feedback failed: ${formatErrorMessage(error)}`);
+          }
+          replyOperation.abortSignal.throwIfAborted();
           const flushed = await tracePhase("reply.memory_flush", () =>
             runMemoryFlushIfNeeded({
               ...preparation,
