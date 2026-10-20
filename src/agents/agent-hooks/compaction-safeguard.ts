@@ -918,7 +918,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       const preservedTextWouldTruncate = preservedRecentMessages.some((message) => {
         const rendered = [
           extractMessageText(message),
-          formatNonTextPlaceholder((message as { content?: unknown }).content),
+          formatNonTextPlaceholder("content" in message ? message.content : undefined),
         ]
           .filter(Boolean)
           .join("\n");
