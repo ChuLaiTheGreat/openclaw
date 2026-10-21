@@ -465,6 +465,31 @@ describe("durable Telegram ingress preparation", () => {
     });
   });
 
+  it.each(["/reset", "/config show"])(
+    "rejects command-denied DM media before preparation or private I/O (%s)",
+    async (caption) => {
+      hooks.prepare.mockResolvedValue({
+        text: "Must not hide the command",
+        suppressAttachments: true,
+      });
+      await withFixture(
+        async ({ monitor, authorize, dedupe, fileRequests, recorded, processed }) => {
+          const original = update();
+          monitor.start();
+          await monitor.admit({ ...original, message: { ...original.message, caption } });
+          await monitor.waitForIdle();
+          await expect(authorize.mock.results[0]?.value).resolves.toEqual({ allowed: false });
+          expect(dedupe).not.toHaveBeenCalled();
+          expect(hooks.prepare).not.toHaveBeenCalled();
+          expect(hooks.mediaResolution).not.toHaveBeenCalled();
+          expect(fileRequests).not.toHaveBeenCalled();
+          expect(recorded).toEqual([]);
+          expect(processed).toEqual([]);
+        },
+      );
+    },
+  );
+
   it("rejects command-denied media from an admitted group sender before registered preparation", async () => {
     const getFile = vi.fn();
     const transcribe = vi.fn();
@@ -517,8 +542,10 @@ describe("durable Telegram ingress preparation", () => {
 
   it.each([
     ["message", "/reset"],
+    ["message", "/config show"],
     ["message", "[Tue 2026-06-02 12:34] /reset"],
     ["edited_message", "/reset"],
+    ["edited_message", "/config show"],
     ["edited_message", "[Tue 2026-06-02 12:34] /reset"],
   ] as const)(
     "delegates an original %s control command without preparation (%s)",

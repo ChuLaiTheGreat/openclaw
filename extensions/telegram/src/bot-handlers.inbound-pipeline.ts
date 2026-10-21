@@ -209,7 +209,7 @@ export function createTelegramInboundPipeline({
         !isChannelPost &&
         !gate.context.commandAuthorizedByConfig &&
         !normalizedMsg.media_group_id &&
-        !hasControlCommand(getTelegramTextParts(normalizedMsg).text, gate.context.cfg, {
+        !hasControlCommand(getTelegramTextParts(normalizedMsg).text, undefined, {
           botUsername: ctx.me?.username?.trim().toLowerCase(),
         }) &&
         (await prepareTelegramAuthorizedIngress(ctx.update))
@@ -506,7 +506,7 @@ export function createTelegramInboundPipeline({
         !isChannelPost &&
         !gate.context.commandAuthorizedByConfig &&
         !normalizedMsg.media_group_id &&
-        !hasControlCommand(getTelegramTextParts(normalizedMsg).text, gate.context.cfg, {
+        !hasControlCommand(getTelegramTextParts(normalizedMsg).text, undefined, {
           botUsername: ctx.me?.username?.trim().toLowerCase(),
         }) &&
         (await prepareTelegramAuthorizedIngress(ctx.update))
