@@ -1,0 +1,43 @@
+name: Exact OpenClaw runtime preparation
+on:
+  push:
+    branches: [qualification/openclaw-compaction-20261021-b]
+    paths:
+      - .github/workflows/openclaw-compaction-20261021.yml
+      - .github/qualification/runtime-20261021/runtime-build.py
+permissions:
+  contents: read
+jobs:
+  runtime:
+    if: github.repository == 'ChuLaiTheGreat/openclaw' && github.event_name == 'push' && github.run_attempt == 1
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        pr: ['171258']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build exact public candidate without credentials
+        shell: bash
+        env:
+          SELECTED_PR: ${{ matrix.pr }}
+        run: |
+          marker="$(openssl rand -hex 24)"
+          echo "::stop-commands::$marker"
+          set +e
+          python3 .github/qualification/runtime-20261021/runtime-build.py "$SELECTED_PR"
+          status=$?
+          echo "::$marker::"
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: exact-runtime-${{ matrix.pr }}
+          path: runtime-export/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
