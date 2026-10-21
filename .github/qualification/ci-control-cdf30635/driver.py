@@ -55,7 +55,11 @@ def capture(args):
 
 def phase(label, lane, args, network='none', extra_env=None, extra_mounts=None, setup=False):
     source = root / lane
+    # Native staging executes its hash-verified runtime from TMPDIR. Docker's
+    # /tmp mount remains noexec; use this phase's owned executable work mount.
+    (source / '.artifacts' / ('tmp-' + label)).mkdir(parents=True)
     env = {'HOME': '/tmp/ci-home', 'PATH': '/tools/node/bin:/tools/bun/bin:/tools:/usr/local/bin:/usr/bin:/bin',
+           'TMPDIR': '/app/.artifacts/tmp-' + label,
            'OPENCLAW_VITEST_RUNTIME': 'bun', 'OPENCLAW_BUN_PATH': '/tools/bun/bin/bun',
            'OPENCLAW_CI_TEST_RUNTIME_POLICY': 'bun-all', 'OPENCLAW_VITEST_MAX_WORKERS': '1',
            'OPENCLAW_VITEST_WORKER_CACHE': '1',
