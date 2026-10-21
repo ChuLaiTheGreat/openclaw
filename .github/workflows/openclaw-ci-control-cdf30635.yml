@@ -1,0 +1,36 @@
+name: Diagnose exact upstream CI base and merge
+on:
+  push:
+    branches: [qualification/ci-base-merge-cdf30635-20261021]
+    paths:
+      - .github/workflows/openclaw-ci-control-cdf30635.yml
+      - .github/qualification/ci-control-cdf30635/driver.py
+permissions:
+  contents: read
+jobs:
+  comparison:
+    if: github.repository == 'ChuLaiTheGreat/openclaw' && github.event_name == 'push' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Compare pinned failures in secretless bounded containers
+        shell: bash
+        run: |
+          marker="$(openssl rand -hex 24)"
+          echo "::stop-commands::$marker"
+          set +e
+          python3 .github/qualification/ci-control-cdf30635/driver.py
+          status=$?
+          echo "::$marker::"
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ci-control-proof-cdf30635
+          path: ci-control-proof-cdf30635/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
