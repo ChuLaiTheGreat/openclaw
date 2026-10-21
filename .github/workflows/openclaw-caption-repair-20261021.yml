@@ -1,0 +1,47 @@
+name: Qualify Telegram control-caption repair
+on:
+  push:
+    branches: [qualification/telegram-control-caption-403cb83c-20261021]
+    paths:
+      - .github/workflows/openclaw-caption-repair-20261021.yml
+      - .github/qualification/caption-repair-20261021/driver.py
+      - .github/qualification/caption-repair-20261021/native-negative.mjs
+permissions:
+  contents: read
+jobs:
+  verification:
+    if: github.repository == 'ChuLaiTheGreat/openclaw' && github.event_name == 'push' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify exact candidate in credential-free Docker
+        shell: bash
+        env:
+          REPAIR_HEAD: 1bc2c3dd27fa1aaaf6347dad838ce616538987f8
+        run: |
+          marker="$(openssl rand -hex 24)"
+          echo "::stop-commands::$marker"
+          set +e
+          python3 .github/qualification/caption-repair-20261021/driver.py
+          status=$?
+          echo "::$marker::"
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: caption-repair-proof-403cb83c
+          path: caption-proof/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: caption-repair-runtime-403cb83c
+          path: caption-runtime/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: warn
