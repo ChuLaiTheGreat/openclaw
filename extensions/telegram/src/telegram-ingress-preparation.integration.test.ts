@@ -468,25 +468,18 @@ describe("durable Telegram ingress preparation", () => {
   it.each(["/reset", "/config show"])(
     "rejects command-denied DM media before preparation or private I/O (%s)",
     async (caption) => {
-      hooks.prepare.mockResolvedValue({
-        text: "Must not hide the command",
-        suppressAttachments: true,
+      await withFixture(async ({ monitor, authorize, dedupe, fileRequests, processed }) => {
+        const original = update();
+        monitor.start();
+        await monitor.admit({ ...original, message: { ...original.message, caption } });
+        await monitor.waitForIdle();
+        await expect(authorize.mock.results[0]?.value).resolves.toEqual({ allowed: false });
+        expect(dedupe).not.toHaveBeenCalled();
+        expect(hooks.prepare).not.toHaveBeenCalled();
+        expect(hooks.mediaResolution).not.toHaveBeenCalled();
+        expect(fileRequests).not.toHaveBeenCalled();
+        expect(processed).toEqual([]);
       });
-      await withFixture(
-        async ({ monitor, authorize, dedupe, fileRequests, recorded, processed }) => {
-          const original = update();
-          monitor.start();
-          await monitor.admit({ ...original, message: { ...original.message, caption } });
-          await monitor.waitForIdle();
-          await expect(authorize.mock.results[0]?.value).resolves.toEqual({ allowed: false });
-          expect(dedupe).not.toHaveBeenCalled();
-          expect(hooks.prepare).not.toHaveBeenCalled();
-          expect(hooks.mediaResolution).not.toHaveBeenCalled();
-          expect(fileRequests).not.toHaveBeenCalled();
-          expect(recorded).toEqual([]);
-          expect(processed).toEqual([]);
-        },
-      );
     },
   );
 
@@ -556,6 +549,7 @@ describe("durable Telegram ingress preparation", () => {
       });
       await withFixture(async ({ monitor, authorize, recorded, fileRequests, processed }) => {
         const original = groupUpdate();
+        const commandName = text.match(/\/\S+/)?.[0] ?? "";
         const command = {
           message_id: original.message.message_id,
           date: original.message.date,
@@ -563,7 +557,7 @@ describe("durable Telegram ingress preparation", () => {
           chat: original.message.chat,
           text,
           entities: [
-            { type: "bot_command" as const, offset: text.indexOf("/"), length: "/reset".length },
+            { type: "bot_command" as const, offset: text.indexOf("/"), length: commandName.length },
           ],
         };
         monitor.start();
