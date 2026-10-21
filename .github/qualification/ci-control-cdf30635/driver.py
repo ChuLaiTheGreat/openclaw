@@ -145,12 +145,23 @@ try:
         source.extractall(tools, filter='data')
     (tools / 'node-v24.19.0-linux-x64').rename(tools / 'node')
     assert sha(tools / 'node/bin/node') == 'bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12'
+    # The upstream bare image does not include the native Bun stager's tools.
+    # Add them inside this finite test image; never change host tooling.
+    diagnostic_dockerfile = root / 'Dockerfile.ci-control'
+    diagnostic_dockerfile.write_bytes((root / 'base/scripts/e2e/Dockerfile').read_bytes() + b'''
+FROM bare AS ci-control
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip perl && rm -rf /var/lib/apt/lists/*
+USER appuser
+''')
     run(['docker', 'buildx', 'create', '--name', builder, '--driver', 'docker-container',
          '--driver-opt', 'memory=2g,memory-swap=2g,cpu-period=100000,cpu-quota=200000'])
-    run(['docker', 'buildx', 'build', '--builder', builder, '--load', '--target', 'bare',
-         '--file', root / 'base/scripts/e2e/Dockerfile', '--tag', 'ci-control-cdf30635', root / 'base'])
+    run(['docker', 'buildx', 'build', '--builder', builder, '--load', '--target', 'ci-control',
+         '--file', diagnostic_dockerfile, '--tag', 'ci-control-cdf30635', root / 'base'])
     image = capture(['docker', 'image', 'inspect', 'ci-control-cdf30635', '--format', '{{.Id}}'])
-    save('image.json', {'image': image, 'dockerfileSha256': sha(root / 'base/scripts/e2e/Dockerfile')})
+    save('image.json', {'image': image, 'dockerfileSha256': sha(root / 'base/scripts/e2e/Dockerfile'),
+                        'diagnosticDockerfileSha256': sha(diagnostic_dockerfile),
+                        'isolatedToolAdditions': ['curl', 'unzip', 'perl']})
     run(['docker', 'buildx', 'rm', builder])
     builder = None
     (tools / 'bun').mkdir()
