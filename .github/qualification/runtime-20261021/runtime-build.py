@@ -114,7 +114,9 @@ try:
     phase('install', ['/tools/pnpm', '--config.manage-package-manager-versions=false', 'install',
                       '--frozen-lockfile', '--ignore-scripts', '--store-dir=/store',
                       '--package-import-method=copy', '--network-concurrency=4', '--child-concurrency=1'], 'bridge')
-    phase('build', ['node', '--import', './scripts/tsx.mjs', 'scripts/build-all.mts', 'qaRuntime'], 'none')
+    # Native worker deployment resolves public registry metadata during bundling.
+    # This fixture still has no credentials, host socket or private mounts.
+    phase('build', ['node', '--import', './scripts/tsx.mjs', 'scripts/build-all.mts', 'qaRuntime'], 'bridge')
     assert not capture(['git', '-C', source, 'status', '--porcelain', '--untracked-files=no'])
     stamps = {name: (source / 'dist' / name).read_text() for name in ['.buildstamp', '.runtime-postbuildstamp']}
     assert all(head in raw for raw in stamps.values())
