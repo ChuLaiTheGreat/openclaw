@@ -1,4 +1,4 @@
-"""Finite secretless exact-CI base/merge controls on the existing fork runner."""
+"""Finite secretless causal qualification of the upstream planner-test repair on the existing fork runner."""
 import hashlib
 import json
 import os
@@ -10,16 +10,11 @@ import tarfile
 import time
 import urllib.request
 
-SHAS = {'base': '9bd9b07fe1d59a2fa148da45609c581a033017e5',
-        'merge': 'b52838fa656964d11d7e860801ff926edd83d917'}
-CASES = {
-    'plan': ('test/scripts/ci-changed-node-test-plan.test.ts', 'keeps more than 96 changed tests'),
-    'feishu': ('extensions/feishu/src/streaming-card.test.ts', 'rejects oversized streaming card-create JSON'),
-    'imap': ('test/scripts/tsdown-config.test.ts', 'routes HTML-only mail and advances the cursor'),
-    'levanto': ('extensions/levanto/registration.test.ts', None),
-    'codex': ('extensions/codex/src/session-catalog-backoff.test.ts', 'shrinks oversized wire pages'),
-    'sdk': ('test/scripts/plugin-sdk-surface-report.test.ts', None),
-}
+SHAS = {'base': 'b52838fa656964d11d7e860801ff926edd83d917'}
+FILE = 'test/scripts/ci-changed-node-test-plan.test.ts'
+CASES = {'plan': (FILE, 'keeps more than 96 changed tests')}
+UPSTREAM = '352b23dd3407ac04b60fe00d11d0781cd37e2fa0'
+FIXED_SHA = '8f88d1615b329a18bf54b6c0a70fec7fe4178760a12c95104d09c4c60508604a'
 assert os.environ['GITHUB_REPOSITORY'] == 'ChuLaiTheGreat/openclaw'
 assert os.environ['GITHUB_RUN_ATTEMPT'] == '1'
 root = Path(os.environ['RUNNER_TEMP']) / 'ci-control-cdf30635'
@@ -175,45 +170,56 @@ USER appuser
     assert sha(tools / 'bun/bin/bun') == pin['artifacts']['linux-x64']['executableSha256']
     save('toolchain.json', {'nodeExecutableSha256': sha(tools / 'node/bin/node'),
                            'pnpmSha256': sha(tools / 'pnpm'), 'bunExecutableSha256': sha(tools / 'bun/bin/bun'), 'bunPin': pin})
-    for lane in SHAS:
-        source = root / lane
-        store = root / ('store-' + lane)
-        cache = root / ('cache-' + lane)
-        store.mkdir()
-        cache.mkdir()
-        env = {'NODE_BIN': '/tools/node/bin', 'FROZEN_LOCKFILE': 'true', 'DEPENDENCY_CACHE': 'false',
-               'DEPENDENCY_CACHE_HIT': 'false', 'GITHUB_WORKSPACE': '/app', 'GITHUB_ENV': '/tmp/ci-env',
-               'PNPM_CONFIG_STORE_DIR': '/store', 'PNPM_CONFIG_CACHE_DIR': '/cache',
-               'PNPM_CONFIG_PACKAGE_IMPORT_METHOD': 'copy', 'PNPM_CONFIG_CHILD_CONCURRENCY': '2',
-               'PNPM_CONFIG_NETWORK_CONCURRENCY': '8'}
-        phase(lane + '-install', lane, ['/bin/bash', '.github/actions/setup-node-env/install-dependencies.sh'],
-              network='bridge', extra_env=env, extra_mounts=[(store, '/store', 'rw'), (cache, '/cache', 'rw')], setup=True)
-        for name, (file, pattern) in CASES.items():
-            label = lane + '-' + name
-            report = '/app/.artifacts/' + label + '.json'
-            args = ['node', 'scripts/run-vitest.mjs', file, '--maxWorkers=1', '--reporter=json', '--outputFile=' + report]
-            if pattern:
-                args += ['-t', pattern]
-            row = phase(label, lane, args, network='bridge')
-            path = source / '.artifacts' / (label + '.json')
-            if path.exists():
-                shutil.copyfile(path, proof / (label + '.json'))
-                native = json.loads(path.read_text())
-                row['counts'] = {k: native.get(k) for k in ['numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'success']}
-                row['failures'] = [{'name': a.get('fullName'), 'messages': a.get('failureMessages')}
-                                   for t in native.get('testResults', []) for a in t.get('assertionResults', []) if a.get('status') == 'failed']
-            else:
-                row['nativeReportAbsent'] = True
-            assert sha(source / file) == json.loads((proof / (lane + '-identity.json')).read_text())['inputs'][file]
-            row['trackedSourceUnchanged'] = not capture(['git', '-C', source, 'status', '--porcelain', '--untracked-files=no'])
-            assert row['trackedSourceUnchanged']
-            results.append(row)
-            save('partial-comparison.json', {'commits': SHAS, 'results': results})
-    save('comparison.json', {'commits': SHAS, 'results': results, 'scope': 'Focused exact base/merge diagnosis, not whole-shard CI or live product acceptance'})
-    outcome = 'compared' if all(not r['state']['OOMKilled'] and not r.get('nativeReportAbsent')
-                                and (r.get('counts', {}).get('numPassedTests') or 0)
-                                + (r.get('counts', {}).get('numFailedTests') or 0) > 0
-                                for r in results) else 'incomplete'
+    lane = 'base'
+    source = root / lane
+    store, cache = root / 'store-base', root / 'cache-base'
+    store.mkdir(); cache.mkdir()
+    env = {'NODE_BIN': '/tools/node/bin', 'FROZEN_LOCKFILE': 'true', 'DEPENDENCY_CACHE': 'false',
+           'DEPENDENCY_CACHE_HIT': 'false', 'GITHUB_WORKSPACE': '/app', 'GITHUB_ENV': '/tmp/ci-env',
+           'PNPM_CONFIG_STORE_DIR': '/store', 'PNPM_CONFIG_CACHE_DIR': '/cache',
+           'PNPM_CONFIG_PACKAGE_IMPORT_METHOD': 'copy', 'PNPM_CONFIG_CHILD_CONCURRENCY': '2',
+           'PNPM_CONFIG_NETWORK_CONCURRENCY': '8'}
+    phase('install', lane, ['/bin/bash', '.github/actions/setup-node-env/install-dependencies.sh'],
+          network='bridge', extra_env=env, extra_mounts=[(store, '/store', 'rw'), (cache, '/cache', 'rw')], setup=True)
+    def owner_test(label, pattern=None):
+        report = source / '.artifacts' / (label + '.json')
+        args = ['node', 'scripts/run-vitest.mjs', FILE, '--maxWorkers=1', '--reporter=json',
+                '--outputFile=/app/.artifacts/' + label + '.json']
+        if pattern: args += ['-t', pattern]
+        row = phase(label, lane, args, network='bridge')
+        assert not row['state']['OOMKilled'] and report.exists()
+        shutil.copyfile(report, proof / (label + '.json'))
+        native = json.loads(report.read_text())
+        row['counts'] = {k: native.get(k) for k in ['numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'success']}
+        row['failures'] = [a for t in native.get('testResults', []) for a in t.get('assertionResults', []) if a.get('status') == 'failed']
+        save(label + '-verdict.json', row)
+        return row
+    red = owner_test('planner-red', CASES['plan'][1])
+    assert red['state']['ExitCode'] == 1 and red['counts']['numFailedTests'] == 1
+    assert len(red['failures']) == 1 and 'expected 1 to be 2' in '\n'.join(red['failures'][0]['failureMessages'])
+    original = (source / FILE).read_text()
+    old = '        expect(job.planConcurrency).toBe(ownerJob.planConcurrency);'
+    new = '        const serialProjection = isSerialNodeTestProjection(job.groups, ownerJob);\n        expect(job.planConcurrency).toBe(serialProjection ? 1 : ownerJob.planConcurrency);'
+    assert original.count(old) == 1
+    (source / FILE).write_text(original.replace(old, new))
+    assert sha(source / FILE) == FIXED_SHA
+    assert capture(['git', '-C', source, 'diff', '--name-only']) == FILE
+    assert capture(['git', '-C', source, 'diff', '--numstat']) == '2\t1\t' + FILE
+    green = owner_test('planner-owning-file')
+    assert green['state']['ExitCode'] == 0 and green['counts']['numPassedTests'] == 77
+    assert green['counts']['numFailedTests'] == 0 and green['counts']['numPendingTests'] == 0
+    phase('format', lane, ['node_modules/.bin/oxfmt', '--check', FILE], setup=True)
+    assert sha(source / FILE) == FIXED_SHA and capture(['git', '-C', source, 'diff', '--name-only']) == FILE
+    save('qualification.json', {'passed': True, 'testedMerge': SHAS['base'],
+                              'contributionHead': 'd9b6e3ff2055d042be440410524e60beefd884fa',
+                              'upstreamRepair': UPSTREAM, 'fixedFixtureSha256': FIXED_SHA,
+                              'onlySourceChange': FILE, 'numstat': '2 additions, 1 deletion',
+                              'productionUnchanged': True, 'redFailed': 1, 'owningPassed': 77,
+                              'owningSkipped': 0, 'formatPassed': True,
+                              'workerMemoryIsolationAssertionsRetained': True,
+                              'scope': 'Causal verification of the existing upstream fixture repair on the exact failing CI merge. No contribution ref change, API budget approval, whole PR CI or product acceptance.'})
+    outcome = 'qualified'
+
 finally:
     for cid in list(active):
         state = json.loads(capture(['docker', 'inspect', cid]))[0]['State']
@@ -231,4 +237,4 @@ finally:
     save('CLOSED.json', {'terminal': True, 'payload_unused': True, 'owner_released': True,
                          'canonical_state_preserved': True, 'outcome': outcome,
                          'ephemeralPayloadRemoved': not root.exists(), 'ownContainersRemoved': not active})
-assert outcome == 'compared', 'Incomplete comparison has no causal product verdict'
+assert outcome == 'qualified', 'Incomplete upstream-fix qualification has no passing verdict'

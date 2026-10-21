@@ -1,4 +1,4 @@
-name: Diagnose exact upstream CI base and merge
+name: Qualify upstream singleton-plan assertion
 on:
   push:
     branches: [qualification/ci-base-merge-cdf30635-20261021]
@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Compare pinned failures in secretless bounded containers
+      - name: Verify upstream planner repair in secretless bounded containers
         shell: bash
         run: |
           marker="$(openssl rand -hex 24)"
