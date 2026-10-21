@@ -1,0 +1,68 @@
+{
+  "head": "1bc2c3dd27fa1aaaf6347dad838ce616538987f8",
+  "base": "e3c9c0e22ce9b71822c04b2f5efc7e1142276704",
+  "tree": "92fee12b1c39c4a6cdad5569b0d818fc7967ca1a",
+  "run": "https://github.com/ChuLaiTheGreat/openclaw/actions/runs/39676414713",
+  "sourceIdentity": {
+    "head": "1bc2c3dd27fa1aaaf6347dad838ce616538987f8",
+    "base": "e3c9c0e22ce9b71822c04b2f5efc7e1142276704",
+    "tree": "92fee12b1c39c4a6cdad5569b0d818fc7967ca1a",
+    "changed": [
+      "extensions/telegram/src/bot-handlers.inbound-authorization.ts",
+      "extensions/telegram/src/bot-handlers.inbound-pipeline.ts",
+      "extensions/telegram/src/telegram-ingress-preparation.integration.test.ts"
+    ],
+    "candidateHashes": {
+      "extensions/telegram/src/bot-handlers.inbound-authorization.ts": "79497cbfe18dd66c6397bbcac648f6b1be728dd8f74a91991632c12533b06364",
+      "extensions/telegram/src/bot-handlers.inbound-pipeline.ts": "f860c1fc131acd9ab74c613d9772c3bbe5f89935f97198cebf512760239dc4ee",
+      "extensions/telegram/src/telegram-ingress-preparation.integration.test.ts": "b0a14226323944bdc09a1591ab99838b34700be7dcefefe76eb084826a003ab4"
+    }
+  },
+  "counts": {
+    "admission": 1,
+    "pipeline": 3,
+    "media": 9
+  },
+  "states": {
+    "admission": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-10-21T21:17:44.049658547Z",
+      "FinishedAt": "2026-10-21T21:18:34.784627314Z"
+    },
+    "pipeline": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-10-21T21:18:34.991654002Z",
+      "FinishedAt": "2026-10-21T21:19:11.294776337Z"
+    },
+    "media": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-10-21T21:19:11.474826789Z",
+      "FinishedAt": "2026-10-21T21:19:30.042889273Z"
+    }
+  },
+  "wholeRecipe": "failed at native max-lines (1005 > unchanged 1000); no consumer failure or OOM"
+}
