@@ -50,11 +50,12 @@ def capture(args):
 
 def phase(label, lane, args, network='none', extra_env=None, extra_mounts=None, setup=False):
     source = root / lane
-    # Native staging executes its hash-verified runtime from TMPDIR. Docker's
-    # /tmp mount remains noexec; use this phase's owned executable work mount.
-    (source / '.artifacts' / ('tmp-' + label)).mkdir(parents=True)
+    # Keep executable temporary fixtures outside the checkout: a synthetic
+    # nongit repository must not inherit /app's real Git index discovery.
+    phase_tmp = root / 'phase-tmp' / label
+    phase_tmp.mkdir(parents=True)
     env = {'HOME': '/tmp/ci-home', 'PATH': '/tools/node/bin:/tools/bun/bin:/tools:/usr/local/bin:/usr/bin:/bin',
-           'TMPDIR': '/app/.artifacts/tmp-' + label,
+           'TMPDIR': '/ci-tmp',
            'OPENCLAW_VITEST_RUNTIME': 'bun', 'OPENCLAW_BUN_PATH': '/tools/bun/bin/bun',
            'OPENCLAW_CI_TEST_RUNTIME_POLICY': 'bun-all', 'OPENCLAW_VITEST_MAX_WORKERS': '1',
            'OPENCLAW_VITEST_WORKER_CACHE': '1',
@@ -65,7 +66,8 @@ def phase(label, lane, args, network='none', extra_env=None, extra_mounts=None, 
             '--user', f'{os.getuid()}:{os.getgid()}', '--memory=9g', '--memory-swap=9g',
             '--cpus=4', '--pids-limit=512', '--cap-drop=ALL', '--security-opt=no-new-privileges',
             '--network=' + network, '--tmpfs', '/tmp:rw,nosuid,nodev,size=512m',
-            '-v', f'{source}:/app', '-v', f'{tools}:/tools:ro', '-w', '/app']
+            '-v', f'{source}:/app', '-v', f'{tools}:/tools:ro',
+            '-v', f'{phase_tmp}:/ci-tmp:rw', '-w', '/app']
     for host, target, mode in extra_mounts or []:
         argv += ['-v', f'{host}:{target}:{mode}']
     for key, value in env.items():
@@ -181,6 +183,17 @@ USER appuser
            'PNPM_CONFIG_NETWORK_CONCURRENCY': '8'}
     phase('install', lane, ['/bin/bash', '.github/actions/setup-node-env/install-dependencies.sh'],
           network='bridge', extra_env=env, extra_mounts=[(store, '/store', 'rw'), (cache, '/cache', 'rw')], setup=True)
+    phase('temp-preflight', lane, ['node', '-e', '''
+const assert=require('node:assert/strict'),{spawnSync}=require('node:child_process');
+const tmp=require('node:os').tmpdir();
+assert.equal(tmp,'/ci-tmp');
+const git=spawnSync('git',['ls-files','--','src'],{cwd:tmp,encoding:'utf8'});
+assert.notEqual(git.status,0,'Temporary fixtures must not discover a parent Git checkout');
+const bun=spawnSync('/tools/bun/bin/bun',['--revision'],{cwd:tmp,encoding:'utf8'});
+assert.equal(bun.status,0);
+assert.equal(bun.stdout.trim(),require('/app/scripts/lib/openclaw-bun.json').revision);
+console.log(JSON.stringify({temporaryOutsideCheckout:true,verifiedRuntimeExecutable:true}));
+'''], setup=True)
     def owner_test(label, pattern=None):
         report = source / '.artifacts' / (label + '.json')
         args = ['node', 'scripts/run-vitest.mjs', FILE, '--maxWorkers=1', '--reporter=json',
