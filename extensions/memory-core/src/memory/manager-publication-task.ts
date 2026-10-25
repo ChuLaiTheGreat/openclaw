@@ -110,12 +110,12 @@ export type MemoryPublicationOperations = {
     input: { source: "memory" | "sessions"; path: string };
     output: ReturnType<typeof readMemorySourceChunks>;
   };
-  "session.current": {
-    input: { agentId: string; sessionId: string };
-    output: "current" | "forgotten";
-  };
   "cache.prune": {
-    input: { maxEntries: number; unreferencedFirst?: MemoryEmbeddingCacheEvictionPreference };
+    input: {
+      maxEntries: number;
+      unreferencedFirst?: MemoryEmbeddingCacheEvictionPreference;
+      recount?: boolean;
+    };
     output: MemoryPublicationResult<boolean>;
   };
   "cache.stage.start": {

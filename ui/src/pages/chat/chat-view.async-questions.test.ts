@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createRoot } from "solid-js";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import type { ChatQueueItem } from "../../lib/chat/chat-types.ts";
 import { captureChatOutboxAdmission } from "../../lib/chat/outbox-store.ts";
@@ -14,12 +15,13 @@ import { chatOutboxOwner } from "./chat-outbox-owner.ts";
 import { subscribeChatOutboxQueue } from "./chat-outbox-queue.ts";
 import { applyChatPendingInputs } from "./chat-pending-inputs.ts";
 import { removeQueuedMessage } from "./chat-queue.ts";
-import { createChatViewFrame } from "./chat-view-frame.ts";
 import { resetChatViewState } from "./chat-view-state.test-support.ts";
 import { createChatProps, disposeChatView, renderChatPropsInto } from "./chat-view.test-helpers.ts";
 import type { ChatProps } from "./chat-view.tsx";
+import { createComposerQuestions } from "./components/chat-composer-questions.ts";
 import { getTranscriptState } from "./components/chat-thread-interactions.ts";
 import {
+  flushDeferredRowPrune,
   installTranscriptDomMocks,
   resetTranscriptTestDom,
 } from "./components/chat-transcript.test-support.ts";
@@ -131,10 +133,13 @@ it("selects a reopened historical question ahead of another pending request", as
   props.messages = [old, terminal("old-run"), latest, terminal("latest-run")];
   draw();
   await vi.waitFor(() => expect(dock()?.textContent).toContain("Which format?"));
-  const summary = [...container.querySelectorAll<HTMLElement>(".chat-question-summary")].find(
-    (element) => element.textContent?.includes("Which audience?"),
-  )!;
-  expect(summary.textContent).toContain("No longer pending");
+  const summary = await waitForSolid(() => {
+    const element = [...container.querySelectorAll<HTMLElement>(".chat-question-summary")].find(
+      (candidate) => candidate.textContent?.includes("Which audience?"),
+    );
+    expect(element?.textContent).toContain("No longer pending");
+    return element!;
+  });
   summary.querySelector<HTMLButtonElement>("button")!.click();
   await vi.waitFor(() => expect(dock()?.textContent).toContain("Which audience?"));
   expect(other()?.value).toBe("");
@@ -161,11 +166,17 @@ it("reads confirmed discard from the outbox before the next queue frame arrives"
     }),
     getQueue: () => queue,
   };
-  const before = createChatViewFrame(props, () => undefined);
+  const questions = createRoot((dispose) => {
+    onTestFinished(dispose);
+    return createComposerQuestions(props.paneId, () => props);
+  });
+  flush();
+  const before = questions.source()!;
   expect(before.asyncQuestions.pending).toEqual([]);
   queue = [];
   before.asyncQuestions.discard(row);
-  const after = createChatViewFrame(props, () => undefined);
+  flush();
+  const after = questions.source()!;
   expect(after.asyncQuestions.pending.map((question) => question.itemId)).toEqual(["audience"]);
   expect(after.asyncQuestions.delivery.size).toBe(0);
   expect(props.onAsyncQuestionSubmit).not.toHaveBeenCalled();
@@ -275,6 +286,7 @@ it.each(["discard", "consumed"] as const)(
         host.chatMessages = [question, ...["question-run", "later-run"].map(terminal)];
         refresh();
       }
+      await flushDeferredRowPrune();
       const discard = () =>
         first.element.querySelector<HTMLButtonElement>(".chat-send-status__discard")!;
       expect(discard()).not.toBeNull();

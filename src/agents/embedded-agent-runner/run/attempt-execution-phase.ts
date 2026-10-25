@@ -15,6 +15,7 @@ import { getGatewayToolCallerIdentity } from "../../tools/gateway-caller-context
 import { log } from "../logger.js";
 import { declarePromptHistoryRewrite } from "../prompt-cache-observability.js";
 import type { EmbeddedAgentQueueHandle } from "../runs.js";
+import { replayToolResultPromptProjections } from "../tool-result-projection-replay.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import { abortable as abortableWithSignal } from "./abortable.js";
 import type { EmbeddedAttemptExecutionPhaseInput } from "./attempt-execution-types.js";
@@ -152,6 +153,16 @@ export async function runEmbeddedAttemptExecutionPhase(
     attempt,
     agentSession: sessionRuntime.agentSession,
     getUserTranscriptContexts: sessionRuntime.boundary.getUserTranscriptContexts,
+    projectSessionForkMessages: (messages) =>
+      replayToolResultPromptProjections(messages, sessionRuntime.toolResultPromptProjectionState),
+    readSessionForkBoundary: () => ({
+      timezone: sessionRuntime.boundary.boundaryTimezone,
+      includeTimestamp: sessionRuntime.boundary.includeBoundaryTimestamp,
+      projectPersistedSenderContext: sessionRuntime.boundary.includeBoundaryTimestamp,
+      userTranscriptContexts: sessionRuntime.boundary.getUserTranscriptContexts?.(),
+      appendOnlyRuntimeContext: sessionRuntime.transcriptPolicy.appendOnlyRuntimeContext,
+      inHistorySystemUpdates: sessionRuntime.transcriptPolicy.inHistorySystemUpdates,
+    }),
     onModelUsage,
     applyPermissionMode: input.lifecycle.applyPermissionMode,
     runAbortController: input.runAbortController,

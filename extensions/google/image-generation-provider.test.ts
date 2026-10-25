@@ -3,12 +3,12 @@ import * as providerAuth from "openclaw/plugin-sdk/provider-auth";
 import * as providerAuthRuntime from "openclaw/plugin-sdk/provider-auth-runtime";
 import * as providerHttp from "openclaw/plugin-sdk/provider-http";
 import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-shared";
-import { mockPinnedHostnameResolution } from "openclaw/plugin-sdk/test-env";
+import { jsonResponse, mockPinnedHostnameResolution } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildGoogleImageGenerationProvider } from "./image-generation-provider.js";
+import { googleImageGenerationProvider } from "./image-generation-provider.js";
 
 function generateImage(overrides: Partial<ImageGenerationRequest> = {}) {
-  return buildGoogleImageGenerationProvider().generateImage({
+  return googleImageGenerationProvider.generateImage({
     provider: "google",
     model: "gemini-3.1-flash-image",
     prompt: "draw a cat",
@@ -29,13 +29,6 @@ function inlineImage(data: Buffer | string, mimeType = "image/png") {
 }
 
 let ssrfMock: { mockRestore: () => void } | undefined;
-
-function jsonResponse(payload: unknown): Response {
-  return new Response(JSON.stringify(payload), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 function installGoogleFetchMock(
   payload: unknown = googleImagePayload([inlineImage(Buffer.from("png-data"))]),
@@ -241,7 +234,7 @@ describe("Google image-generation provider", () => {
   it("still reports not configured with a custom endpoint and no credentials", async () => {
     vi.spyOn(providerAuth, "isProviderApiKeyConfiguredAsync").mockResolvedValue(false);
 
-    const provider = buildGoogleImageGenerationProvider();
+    const provider = googleImageGenerationProvider;
     expect(
       await provider.isConfiguredAsync?.({
         agentDir: "/tmp/agent",
