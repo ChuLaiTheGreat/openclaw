@@ -4,7 +4,7 @@
 import type { ReasoningLevel, ThinkLevel } from "../auto-reply/thinking.js";
 import type { AssistantMessage } from "../llm/types.js";
 import type { HookRunner } from "../plugins/hooks.js";
-import type { UserTranscriptContext } from "./embedded-agent-runner/run/attempt-history.js";
+import type { UserTranscriptContext } from "./embedded-agent-runner/run/attempt-llm-boundary.types.js";
 import type { EmbeddedRunAttemptInternalParams } from "./embedded-agent-runner/run/internal-params.js";
 import type { EmbeddedRunAttemptParams } from "./embedded-agent-runner/run/types.js";
 import type { PreparedProviderFailoverOwner } from "./failover/provider-patterns.js";
