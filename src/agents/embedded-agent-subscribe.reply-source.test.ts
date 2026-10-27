@@ -13,7 +13,7 @@ import {
   resolveAssistantReplySource,
   withAssistantReplySource,
 } from "./embedded-agent-reply-source.js";
-import type { UserTranscriptContext } from "./embedded-agent-runner/run/attempt-history.js";
+import type { UserTranscriptContext } from "./embedded-agent-runner/run/attempt-llm-boundary.types.js";
 import { buildPayloads } from "./embedded-agent-runner/run/payloads.test-helpers.js";
 import { createSubscribedSessionHarness } from "./embedded-agent-subscribe.e2e-harness.js";
 import { persistAgentSessionMessage } from "./sessions/agent-session-transcript.js";
