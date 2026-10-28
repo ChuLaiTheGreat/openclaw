@@ -105,9 +105,7 @@ it("does not restore deleted diary content from an update already in progress", 
 });
 
 it("reads and removes backfill entries", async () => {
-  const written = await writeBackfill(undefined, {
-    sourcePath: "memory/2026-04-05.md",
-  });
+  const written = await writeBackfill(undefined, { sourcePath: "memory/2026-04-05.md" });
   expect(written.written).toBe(1);
 
   await expect(readRecentDreamDiaryEntries({ workspaceDir })).resolves.toHaveLength(1);
@@ -122,6 +120,28 @@ it("refuses to overwrite a symlinked DREAMS.md", async () => {
   await expect(writeBackfill()).rejects.toThrow("Refusing to write symlinked DREAMS.md");
   await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("outside\n");
 });
+
+it.each(["diary", "daily", "context"] as const)(
+  "preserves invalid UTF-8 bytes for %s",
+  async (kind) => {
+    const file = kind === "daily" ? path.join(workspaceDir, "memory/2026-04-05.md") : dreamsPath;
+    const entry = renderDiary("*April 5, 2026*\n\nPrior diary entry");
+    const bytes = Buffer.concat([Buffer.from(entry), Buffer.from([0xff])]);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, bytes);
+    const operation = {
+      context: () => readRecentDreamDiaryEntries({ workspaceDir }),
+      daily: writePhase,
+      diary: writeBackfill,
+    }[kind]();
+    if (kind === "context") {
+      await expect(operation).resolves.toEqual([]);
+    } else {
+      await expect(operation).rejects.toThrow(/must be valid UTF-8/);
+    }
+    expect(await fs.readFile(file)).toEqual(bytes);
+  },
+);
 
 it("publishes unchanged truncated context ending in an emoji", async () => {
   const prefix = "a".repeat(359);
@@ -156,14 +176,17 @@ it("skips symlinked and non-file DREAMS.md when reading recent context", async (
   ).resolves.toEqual([]);
 });
 
-it("only optional diary context suppresses EPERM", async () => {
-  await fs.writeFile(dreamsPath, "# Existing\n");
-  const error = Object.assign(new Error("read denied"), { code: "EPERM" });
-  vi.spyOn(fs, "open").mockRejectedValue(error);
+it.each(["EPERM", "ERR_INVALID_UTF8"])(
+  "only optional diary context suppresses %s",
+  async (code) => {
+    await fs.writeFile(dreamsPath, "# Existing\n");
+    const error = Object.assign(new Error("read denied"), { code });
+    vi.spyOn(fs, "open").mockRejectedValue(error);
 
-  await expect(readDreamsFile(dreamsPath)).rejects.toBe(error);
-  await expect(readRecentDreamDiaryEntries({ workspaceDir })).resolves.toEqual([]);
-});
+    await expect(readDreamsFile(dreamsPath)).rejects.toBe(error);
+    await expect(readRecentDreamDiaryEntries({ workspaceDir })).resolves.toEqual([]);
+  },
+);
 
 it("preserves an undefined error code across optional context handling", async () => {
   const code = vi
@@ -189,6 +212,32 @@ it("preserves restrictive DREAMS.md permissions across atomic replace", async ()
   }
 });
 
+it.each([false, true])("keeps the workspace directory policy (new=%s)", async (fresh) => {
+  if (fresh) {
+    workspaceDir = path.join(workspaceDir, "fresh");
+    dreamsPath = path.join(workspaceDir, "DREAMS.md");
+  } else if (process.platform !== "win32") {
+    await fs.chmod(workspaceDir, 0o770);
+    const open = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (args[0] === workspaceDir) {
+        vi.spyOn(handle, "chmod").mockRejectedValue(
+          Object.assign(new Error("shared workspace chmod denied"), { code: "EPERM" }),
+        );
+      }
+      return handle;
+    });
+  }
+
+  await writeBackfill();
+
+  expect(await readDiary()).toContain("The archive remembered a durable fact.");
+  if (process.platform !== "win32") {
+    expect((await fs.stat(workspaceDir)).mode & 0o7777).toBe(fresh ? 0o700 : 0o770);
+  }
+});
+
 it("serializes concurrent writes and deduplication", async () => {
   const entry = "*April 11, 2026, 8:00 AM*\n\nThe server room smelled like rain.";
   await fs.writeFile(dreamsPath, renderDiary(entry, entry));
@@ -209,14 +258,8 @@ describe("dreaming markdown storage", () => {
   it("replaces the managed deep summary while preserving the diary block", async () => {
     await fs.writeFile(
       dreamsPath,
-      `<!-- openclaw:dreaming:diary:start -->
-The old diary entry stays.
-<!-- openclaw:dreaming:diary:end -->
-## Deep Sleep
-<!-- openclaw:dreaming:deep:start -->
-- Old summary.
-<!-- openclaw:dreaming:deep:end -->
-`,
+      `${renderDiary("The old diary entry stays.")}## Deep Sleep\n` +
+        "<!-- openclaw:dreaming:deep:start -->\n- Old summary.\n<!-- openclaw:dreaming:deep:end -->\n",
       "utf-8",
     );
 

@@ -123,10 +123,13 @@ The supported PostgreSQL families are:
   retained registry paths and explicit session or agent directories. Older SQLite
   schemas migrate only in the port's private copy. Compressed transcript events
   become plain JSON on PostgreSQL; transcript search is rebuilt before publication.
-  Rebuildable memory indexes are omitted; canonical memory origins, tombstones,
-  and the embedding cache remain intact. After publication and port-owner release,
-  the selected memory plugin rebuilds ported agents under fresh offline ownership.
-  Unchanged cached chunks reuse their embeddings. Output and `--json` report
+  Rebuildable memory search projections are omitted; canonical memory origins,
+  tombstones, the embedding cache, and stored chunk vectors with their identity metadata
+  remain intact in the verified copy. After publication and port-owner release,
+  the selected memory plugin rebuilds ported agents under fresh offline ownership,
+  several agents at a time when the host's CPUs and free memory allow it.
+  Unchanged chunks reuse cached or stored embeddings only when provider, model,
+  provider settings, input format, hash, and dimensions match. Output and `--json` report
   per-agent results; a failure leaves the port successful and warns to retry
   `openclaw memory index --agent <id>` before starting the Gateway. Retained stores
   need their original agent configuration to rebuild.
@@ -420,14 +423,21 @@ The error names the missing extension and the installation SQL. Install it in
 the selected database, then reopen the store; use `provider: "none"` when only
 keyword search is wanted.
 
-Full text uses a named `simple` plus `unaccent` configuration, a stored generated
-`tsvector`, and GIN. Queries bind literal terms and compile conjunctions,
+Full text uses a named `simple` plus `unaccent` configuration, a stored
+`tsvector` column, and GIN. Agent schema 38 and newer keep that column as a plain
+column maintained by a `<table>_search_sync` trigger (also after the 37→38
+migration, which drops the old generated expression in place and reparses the
+rows); historical stores before 38 used a generated column. Queries bind literal terms and compile conjunctions,
 disjunctions, adjacent phrases, and final-lexeme prefixes. User text is never
 interpreted as PostgreSQL query operators. The default full-text capability uses
 `ts_rank_cd` with normalization 2: scores are engine-local, higher is better, and ordering differs
-from SQLite BM25. Tokenization also differs for punctuation, compound words, and
-Unicode. Snippets use `ts_headline` only after a materialized, bounded candidate
-selection, with a word budget of 2–48, a character cap of 500, and empty highlight markers. Trigram
+from SQLite BM25. Punctuation runs are replaced by spaces before indexing and before
+parsing the query, so words inside dates, paths, file names, and `a/b` pairs match
+on both engines (`08` in `2026-08-18`, `server` in `server.py`); Unicode
+normalization still differs. Snippets use `ts_headline` only after a materialized, bounded candidate
+selection, with a word budget of 2–48, a character cap of 500, and empty highlight markers. The headline
+parses the same punctuation split as the query to pick its passage, then returns that passage from
+the original text, so snippets keep their punctuation. Trigram
 contains uses its own GIN index and escaped literal `ILIKE`; it is not a universal
 fallback for full-text queries. Trigram matches rank by native `word_similarity`
 before the result limit; multi-term memory queries average their term scores.
@@ -546,6 +556,12 @@ Keep this directory private and retain the complete set. Former PostgreSQL
 namespaces are not dropped automatically.
 
 All destination stores are privately migrated and verified before publication.
+After committing a PostgreSQL bulk copy, port and backup restore run `ANALYZE`
+only on tables in the destination namespace. Agent ports refresh statistics again
+after the memory index rebuild. The port report records the result. Statistics
+refresh uses a 10-second statement timeout and a 1-second lock timeout; a failure
+is a warning and preserves the verified data for autovacuum to analyze later.
+
 Agent and shared-state columns normally created on a feature's first use are
 completed in the private copy when absent, preserving existing rows with `NULL`
 values and leaving the original SQLite store unchanged. Unknown columns still
@@ -628,6 +644,10 @@ do not restrict a role's access.
 
 One Gateway owns each store. PostgreSQL does not enable multiple active owners of one store,
 external writers, replication management, or connection-pool management.
+
+Session-state history pruning compares sequence watermarks as integers on both
+engines. PostgreSQL batches explicitly cast bound watermark values to `bigint`;
+this does not change the schema or the existing history retention limits.
 
 Writers use `READ COMMITTED` and a transaction-scoped advisory lock derived from
 the store identity. Every PostgreSQL write, including a single statement, uses
