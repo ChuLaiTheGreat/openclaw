@@ -1,4 +1,4 @@
-# Finite comparison of the two exact published refs; synthetic provider only.
+# Native push starts this finite diagnostic; no runtime credentials are mounted.
 name: Diagnose PR 178125 subagent delivery
 on:
   push:
