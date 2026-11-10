@@ -1,0 +1,60 @@
+name: Diagnose PR 178125 subagent delivery
+on:
+  push:
+    branches: [codex/diagnose-178125-ci-20261110]
+    paths: [.github/workflows/diagnose-178125-ci.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    if: github.repository == 'ChuLaiTheGreat/openclaw' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: base
+            ref: 7c1e35b2f4fe1d75ce28ff48e2b3cfb2496d1809
+          - lane: candidate
+            ref: 625e01dfef6ef37ae64c728a0dc5bff207d534ad
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+      - name: Prepare exact runtime in secretless container
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .diagnostic
+          git rev-parse HEAD > .diagnostic/source.txt
+          docker pull node:24.22.1-bookworm
+          docker image inspect node:24.22.1-bookworm --format '{{.Id}}' > .diagnostic/image.txt
+          docker run --rm --name pr178125-build --user "$(id -u):$(id -g)" --memory=6g --memory-swap=6g --cpus=2 --pids-limit=512 --cap-drop=ALL --security-opt=no-new-privileges -e HOME=/tmp/qa-home -e NODE_OPTIONS=--max-old-space-size=4096 -v "$PWD:/app" -w /app node:24.22.1-bookworm bash -lc '
+            set -euo pipefail
+            mkdir -p "$HOME"
+            npm install --prefix /tmp/pm pnpm@12.15.0
+            export PATH="/tmp/pm/node_modules/.bin:$PATH"
+            pnpm install --frozen-lockfile
+            OPENCLAW_BUILD_PRIVATE_QA=1 pnpm build qaRuntime
+          ' > .diagnostic/build.log 2>&1
+      - name: Reproduce one failing scenario with full synthetic evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --name pr178125-qa --user "$(id -u):$(id -g)" --memory=6g --memory-swap=6g --cpus=2 --pids-limit=512 --cap-drop=ALL --security-opt=no-new-privileges --network=none -e HOME=/tmp/qa-home -e NODE_OPTIONS=--max-old-space-size=4096 -v "$PWD:/app" -w /app node:24.22.1-bookworm bash -lc '
+            mkdir -p "$HOME"
+            timeout --signal=TERM --kill-after=15s 10m node openclaw.mjs qa run --repo-root . --qa-profile smoke-ci --provider-mode mock-openai --concurrency 1 --evidence-mode full --output-dir .diagnostic/result --scenario subagent-empty-completion-recovery
+          ' > .diagnostic/scenario.log 2>&1
+      - name: Stop task containers
+        if: always()
+        run: |
+          docker rm -f pr178125-build pr178125-qa 2>/dev/null || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: pr178125-${{ matrix.lane }}
+          path: .diagnostic/
+          retention-days: 1
+          if-no-files-found: error
