@@ -1,3 +1,4 @@
+# Finite comparison of the two exact published refs; synthetic provider only.
 name: Diagnose PR 178125 subagent delivery
 on:
   push:
